@@ -33,6 +33,7 @@ a  { color: var(--accent); }
 .work-group h3 { color: var(--text); text-transform: none; letter-spacing: normal; }
 .work-group figure { margin: .6rem 0; }
 .picture-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .4rem 0; }
+.picture-tools button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .picture-tools select { max-width: 100%; font: inherit; color: var(--text); background: var(--panel-2); }
 .shot-scroll { overflow: auto; }
 .shot-scroll.zoomed .shot { width: max(100%, 80rem); }
@@ -264,14 +265,35 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
     paint();
   });
 
-  document.querySelectorAll('[data-spotlight]').forEach(function (select) {
-    var image = select.closest('figure').querySelector('.shot');
+  document.querySelectorAll('.work-group figure').forEach(function (figure) {
+    var image = figure.querySelector('.shot');
+    var select = figure.querySelector('[data-spotlight]');
+    var buttons = figure.querySelectorAll('[data-guide-view]');
     var original = [image.src, image.alt];
-    select.addEventListener('change', function () {
-      var template = document.getElementById(select.value);
+    var active = null;
+
+    function showView() {
+      var action = select && select.value;
+      var target = action;
+      if (active) {
+        target = action && active.dataset.guideView === 'only'
+          ? action + '-only' : active.dataset.viewTarget;
+      }
+      var template = document.getElementById(target || '');
       var shot = template ? template.content.querySelector('img') : null;
       image.src = shot ? shot.src : original[0];
       image.alt = shot ? shot.alt : original[1];
+    }
+
+    if (select) select.addEventListener('change', showView);
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        active = active === button ? null : button;
+        buttons.forEach(function (control) {
+          control.setAttribute('aria-pressed', control === active);
+        });
+        showView();
+      });
     });
   });
 

@@ -3525,6 +3525,7 @@ def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> No
         for bottom, work in step_groups_by_face(group)
     ]
     seen = []
+    drawn = []
     original = guide_images.BoardScene.set_problem_focus
 
     def focus(scene, holes, conductors, components):
@@ -3532,16 +3533,32 @@ def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> No
         seen.append((scene.side, (*components, *conductors), ruler.label_px))
         original(scene, holes, conductors, components)
 
+    annotate = guide_images._annotate
+    def record(painter, current, side, work, source, target, say):
+        drawn.append(({part.id for part in current.components}, {wire.id for wire in current.conductors}))
+        annotate(painter, current, side, work, source, target, say)
+
     monkeypatch.setattr(guide_images.BoardScene, "set_problem_focus", focus)
+    monkeypatch.setattr(guide_images, "_annotate", record)
     images = guide_images.render_guide_images(doc, guide, lookup)
-    assert set(images) == {step_focus(work[0]) for _, work in frames} | {
+    cumulative = {step_focus(work[0]) for _, work in frames} | {
         f"action:{step_focus(step)}" for _, work in frames if len(work) > 1 for step in work
     }
-    assert seen == [
+    finished = {f"finished:{int(bottom)}" for bottom, _ in frames}
+    assert set(images) == cumulative | {f"only:{key}" for key in cumulative} | finished
+    expected = [
         ("bottom" if bottom else "top", tuple(step_focus(step) for step in work), 16)
         for bottom, group in frames
         for work in (group, *((step,) for step in group if len(group) > 1))
     ]
+    assert seen == expected * 2
+    for (_, focused, _), (parts, wires) in zip(
+        expected, drawn[len(expected):2 * len(expected)], strict=True
+    ):
+        assert parts | wires == set(focused)
+    assert drawn[-len(finished):] == [
+        ({part.id for part in doc.components}, {wire.id for wire in doc.conductors})
+    ] * len(finished)
     assert all(image.startswith(b"\x89PNG") for image in images.values())
 
 

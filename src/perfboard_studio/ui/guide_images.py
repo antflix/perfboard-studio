@@ -1,6 +1,7 @@
 """Flat, labeled board illustrations for the exported build guide."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from itertools import product
 
 from PySide6.QtCore import QBuffer, QIODevice, QPointF, QRectF, Qt
@@ -109,7 +110,7 @@ def render_guide_images(
     lookup: FootprintLookup,
     progress: Callable[[int, int], bool] | None = None,
 ) -> dict[str, bytes]:
-    """Draw a picture for each group and face, plus individual work in multi-action pictures."""
+    """Draw cumulative and isolated action views, and one finished view per face."""
     frames: list[tuple[int, bool, tuple[GuideStep, ...], str]] = []
     done = 0
     for phase in guide.phases:
@@ -124,6 +125,11 @@ def render_guide_images(
                         for step in work
                     )
 
+    frames += [(index, bottom, work, f"only:{key}") for index, bottom, work, key in frames]
+    frames += [(-1, bottom, (), f"finished:{int(bottom)}") for bottom in dict.fromkeys(
+        bottom for _, bottom, _, _ in frames
+    )]
+
     outline = board_outline_mm(doc.board)
     margin = RULER_MARGIN_MM
     source = QRectF(outline.x, outline.y, outline.width, outline.height).adjusted(
@@ -137,7 +143,14 @@ def render_guide_images(
     say = phrasebook(guide.language)
     images: dict[str, bytes] = {}
     for index, bottom, work, key in frames:
-        current = document_at_step(doc, guide, index)
+        current = doc if index == -1 else document_at_step(doc, guide, index)
+        if key.startswith("only:"):
+            active = {step_focus(step) for step in work}
+            current = replace(
+                current,
+                components=tuple(part for part in current.components if part.id in active),
+                conductors=tuple(wire for wire in current.conductors if wire.id in active),
+            )
         side: BoardSide = "bottom" if bottom else "top"
         scene = BoardScene(
             current, lookup, side=side, show_ratsnest=False,
@@ -146,12 +159,15 @@ def render_guide_images(
         for item in scene.component_items.values():
             if item.comp.mirrored:
                 item.mount_side = "bottom"
+            if not work:
+                item.setOpacity(0.25)
         scene.addItem(HoleRulerItem(doc.board, side, label_px=16))
-        scene.set_problem_focus(
-            (),
-            tuple(step_focus(step) for step in work if not isinstance(step, PartStep)),
-            tuple(step_focus(step) for step in work if isinstance(step, PartStep)),
-        )
+        if work:
+            scene.set_problem_focus(
+                (),
+                tuple(step_focus(step) for step in work if not isinstance(step, PartStep)),
+                tuple(step_focus(step) for step in work if isinstance(step, PartStep)),
+            )
         image = QImage(width, height, QImage.Format.Format_RGB32)
         painter = QPainter(image)
         try:

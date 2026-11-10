@@ -320,6 +320,7 @@ a  { color: var(--accent); }
 .work-group h3 { color: var(--text); text-transform: none; letter-spacing: normal; }
 .work-group figure { margin: .6rem 0; }
 .picture-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .4rem 0; }
+.picture-tools button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .picture-tools select { max-width: 100%; font: inherit; color: var(--text); background: var(--panel-2); }
 .shot-scroll { overflow: auto; }
 .shot-scroll.zoomed .shot { width: max(100%, 80rem); }
@@ -440,14 +441,35 @@ _SCRIPT = """
     paint();
   });
 
-  document.querySelectorAll('[data-spotlight]').forEach(function (select) {
-    var image = select.closest('figure').querySelector('.shot');
+  document.querySelectorAll('.work-group figure').forEach(function (figure) {
+    var image = figure.querySelector('.shot');
+    var select = figure.querySelector('[data-spotlight]');
+    var buttons = figure.querySelectorAll('[data-guide-view]');
     var original = [image.src, image.alt];
-    select.addEventListener('change', function () {
-      var template = document.getElementById(select.value);
+    var active = null;
+
+    function showView() {
+      var action = select && select.value;
+      var target = action;
+      if (active) {
+        target = action && active.dataset.guideView === 'only'
+          ? action + '-only' : active.dataset.viewTarget;
+      }
+      var template = document.getElementById(target || '');
       var shot = template ? template.content.querySelector('img') : null;
       image.src = shot ? shot.src : original[0];
       image.alt = shot ? shot.alt : original[1];
+    }
+
+    if (select) select.addEventListener('change', showView);
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        active = active === button ? null : button;
+        buttons.forEach(function (control) {
+          control.setAttribute('aria-pressed', control === active);
+        });
+        showView();
+      });
     });
   });
 
@@ -480,7 +502,8 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
 
     ``step_images`` contains one whole-board image per group and face, keyed by the
     ``guide.step_focus`` of its first action, plus optional ``action:<id>`` images. Pass raw image
-    bytes. This function base64s them into the document itself. That is the whole point: a caller cannot hand
+    bytes. Optional ``only:<key>`` and ``finished:<0 or 1>`` images enable board view toggles.
+    This function base64s the images into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
     beside it, or a phone's network. Rendering them needs a board and a Qt scene, which is
     the host's job (``ui/guide_images.render_guide_images``); this module has never known what a
@@ -585,6 +608,12 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
                 step_id += 1
                 parts.append(_html_check(check, f"s{step_id}", say, board=guide.board))
         parts.append("</section>")
+
+    for face_index in (0, 1):
+        face = say("Copper side" if face_index else "Component side")
+        finished = _html_step_image(f"finished:{face_index}", images, f"{say('Finished board')} · {face}")
+        if finished:
+            parts.append(f'<template id="finished-{face_index}">{finished}</template>')
 
     if guide.harness:
         parts.append(
@@ -828,12 +857,24 @@ def _html_group_picture(
 ) -> str:
     options: list[str] = []
     templates: list[str] = []
+    group_target = f"spot-{group_index}-{int(bottom)}"
+    only = _html_step_image(f"only:{step_focus(work[0])}", images, f"{say('Only this step')} · {face}")
+    if only:
+        templates.append(f'<template id="{group_target}-only">{only}</template>')
+    can_isolate = bool(only)
     for i, step in enumerate(work):
         individual = _html_step_image(f"action:{step_focus(step)}", images, f"{step.title} · {face}")
         if individual:
-            target = f"spot-{group_index}-{int(bottom)}-{i}"
+            target = f"{group_target}-{i}"
             options.append(f'<option value="{target}">{escape(step.title)}</option>')
             templates.append(f'<template id="{target}">{individual}</template>')
+            isolated = _html_step_image(
+                f"only:action:{step_focus(step)}", images, f"{say('Only this step')} · {step.title} · {face}"
+            )
+            if isolated:
+                templates.append(f'<template id="{target}-only">{isolated}</template>')
+            else:
+                can_isolate = False
     select = (
         f'<label>{escape(say("Spotlight"))} <select data-spotlight>'
         f'<option value="">{escape(say("Whole group"))}</option>{"".join(options)}</select></label>'
@@ -843,10 +884,20 @@ def _html_group_picture(
         "{count} component(s)" if isinstance(work[0], PartStep) else "{count} connection(s)",
         count=len(work),
     )
+    buttons = []
+    for mode, target, label, available in (
+        ("only", f"{group_target}-only", say("Only this step"), can_isolate),
+        ("finished", f"finished-{int(bottom)}", say("Finished board"), f"finished:{int(bottom)}" in images),
+    ):
+        if available:
+            buttons.append(
+                f'<button type="button" data-guide-view="{mode}" data-view-target="{target}" '
+                f'aria-pressed="false">{escape(label)}</button>'
+            )
     legend = say("Gold labels mark the current work. Gray labels mark installed wire ends.")
     return (
         f'<figure><figcaption>{escape(face)} · {escape(summary)}<br>{escape(legend)}</figcaption>'
-        f'<div class="picture-tools">{select}'
+        f'<div class="picture-tools">{select}{"".join(buttons)}'
         f'<button type="button" data-guide-zoom aria-pressed="false">{escape(say("Zoom board"))}</button></div>'
         f'<div class="shot-scroll">{picture}</div>{"".join(templates)}</figure>'
     )

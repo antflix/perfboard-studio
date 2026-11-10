@@ -937,6 +937,8 @@ TURKISH: dict[str, str] = {
     "Whole group": "Tüm grup",
     "Gold labels mark the current work. Gray labels mark installed wire ends.":
         "Altın renkli etiketler geçerli işi, gri etiketler takılı kablo uçlarını gösterir.",
+    "Only this step": "Yalnızca bu adım",
+    "Finished board": "Tamamlanmış kart",
     "Zoom board": "Kartı büyüt",
     "{count} component(s)": "{count} bileşen",
     "{count} connection(s)": "{count} bağlantı",
