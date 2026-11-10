@@ -90,13 +90,13 @@ from perfboard_studio.geometry import (
     undrilled_holes,
 )
 from perfboard_studio.guide import (
-    ConductorStep,
     Guide,
-    all_steps,
     document_at_step,
     lead_marker,
     signal_colour_index,
     step_focus,
+    step_groups,
+    step_groups_by_face,
 )
 from perfboard_studio.model import (
     Board,
@@ -7172,14 +7172,33 @@ def _pick_out(actor: vtk.vtkActor) -> vtk.vtkActor:
     return actor
 
 
+def _mount_actor_underneath(actor: vtk.vtkActor, thickness: float) -> None:
+    flip = vtk.vtkTransform()
+    flip.Translate(0, 0, -thickness)
+    flip.Scale(1, 1, -1)
+    actor.SetUserTransform(flip)
+    mapper = actor.GetMapper()
+    # A reflection reverses the mesh winding as well as its position.
+    reverse = vtk.vtkReverseSense()
+    reverse.ReverseNormalsOff()
+    mapper.Update()
+    if mapper.IsA("vtkGlyph3DMapper"):
+        reverse.SetInputData(mapper.GetSource(0))
+        mapper.SetSourceConnection(reverse.GetOutputPort())
+    else:
+        reverse.SetInputData(mapper.GetInput())
+        mapper.SetInputConnection(reverse.GetOutputPort())
+
+
 def populate_renderer(
     ren: vtk.vtkRenderer,
     doc: PerfDocument,
     lookup: FootprintLookup,
     *,
     exploded_mm: float = 0.0,
-    highlight: str | None = None,
+    highlight: str | frozenset[str] | None = None,
     pin_names: bool = True,
+    guide_mounts: bool = False,
     board_notes: bool = True,
     subject_actors: list[vtk.vtkActor] | None = None,
     owners: dict[vtk.vtkActor, ActorOwner] | None = None,
@@ -7188,8 +7207,7 @@ def populate_renderer(
 
     ``exploded_mm`` lifts every part off the board, so the holes each one drops into are
     visible at once (PLAN.md D7). ``highlight`` is a component or conductor id — the value
-    ``guide.step_focus`` returns — and dims everything else, which is what turns a frame
-    of the assembly sequence into an illustration of one step. ``subject_actors``, if
+    ``guide.step_focus`` returns — or a set of those ids. Other parts and wires are dimmed. ``subject_actors``, if
     given, is filled with the highlighted thing's own solids, which is what
     :func:`frame_step` frames on: where a part IS is what was just drawn, not a second
     answer worked out from the footprint. ``owners``, if given, is filled with the part or
@@ -7208,6 +7226,7 @@ def populate_renderer(
     and only an explicit request (opening the view, flipping the board, "Reset View") may
     move it -- see :func:`apply_default_camera`.
     """
+    focus = frozenset((highlight,)) if isinstance(highlight, str) else highlight
     board = doc.board
     # Actors and 2D props only. Lights are not view props, so they survive -- which is what
     # makes this safe to call repeatedly without re-adding a light every time.
@@ -7275,17 +7294,19 @@ def populate_renderer(
         printed = lay_out_pin_names(doc, lookup, pin_name_width_mm)
     lead_colours = _flying_lead_colours(doc, lookup)
     for comp in doc.components:
-        subject = highlight is not None and comp.id == highlight
+        subject = focus is not None and comp.id in focus
         for actor in build_component(lookup, comp, board, lead_colours.get(comp.id)):
+            if guide_mounts and comp.mirrored:
+                _mount_actor_underneath(actor, board.thickness)
             _lift(actor, exploded_mm)
-            if highlight is not None:
+            if focus is not None:
                 (_pick_out if subject else _dim)(actor)
             if subject and subject_actors is not None:
                 subject_actors.append(actor)
             if owners is not None:
                 owners[actor] = ("component", comp.id)
             ren.AddActor(actor)
-        if printed is not None:
+        if printed is not None and not (guide_mounts and comp.mirrored):
             # A module's names are on its own board and rise with it; a part's names on
             # this board stay on this board -- and so do a module's outer header row's.
             names = printed.labels.get(comp.id, ())
@@ -7295,7 +7316,7 @@ def populate_renderer(
                     continue
                 for actor in build_pin_names(lookup, comp, board, group):
                     _lift(actor, exploded_mm if on_module else 0.0)
-                    if highlight is not None:
+                    if focus is not None:
                         (_pick_out if subject else _dim)(actor)
                     if owners is not None:
                         owners[actor] = ("component", comp.id)
@@ -7306,7 +7327,7 @@ def populate_renderer(
     # see occupancy.stacking_layers.
     layers = stacking_layers(doc)
     for cond in doc.conductors:
-        subject = highlight is not None and cond.id == highlight
+        subject = focus is not None and cond.id in focus
         for actor in build_conductor(
             cond,
             board,
@@ -7314,7 +7335,7 @@ def populate_renderer(
             net_class=net_class_by_id.get(cond.net_id or ""),
             signal_index=signal_index.get(cond.net_id or "", 0),
         ):
-            if highlight is not None:
+            if focus is not None:
                 (_pick_out if subject else _dim)(actor)
             if subject and subject_actors is not None:
                 subject_actors.append(actor)
@@ -8566,48 +8587,17 @@ def render_step_images(
     height: int = 370,
     progress: Callable[[int, int], bool] | None = None,
 ) -> dict[str, bytes]:
-    """One picture per build step (PLAN.md §7.2), keyed by ``guide.step_focus``.
-
-    JPEG bytes rather than files, because that is what ``guide_export.guide_to_html``
-    takes: it base64s them into the document, so the finished guide cannot acquire a
-    dependency on a folder beside it. Base64 costs a third on top, which is the other
-    reason the format matters here (see ``STEP_IMAGE_JPEG_QUALITY``).
-
-    FROM THE SIDE THE WORK IS DONE ON. Most connections are made on the solder side, and
-    photographed from the component side they are behind 1.6 mm of board -- the first
-    version of this produced fourteen pictures of a board with nothing happening in them.
-    So there are two cameras, and a step is shot from whichever face its subject is on,
-    which is also the face the builder is looking at when they do it.
-
-    CLOSE ON THE SUBJECT, FROM ONE DIRECTION PER FACE (:func:`frame_step`). The camera
-    used to be framed on the finished board and left alone, so that flipping through the
-    guide would read as one board being built rather than unrelated photographs -- and on
-    a 9 x 15 cm board a resistor was then a few pixels of highlight, a picture that said
-    nothing a builder could act on. The direction is still the face's, worked out once on
-    the finished board, which is what kept the pages reading as one board; only the
-    distance and the aim follow the step, with at least ``STEP_CONTEXT_MM`` round it
-    (:func:`step_frame_bounds`).
-
-    ONE render window, re-actored per step -- which is what ``populate_renderer`` exists
-    for, and is the difference between half a second and a minute -- with the two face
-    cameras worked out on the finished board up front and each step aimed from one of
-    them. It used to be a window
-    per face, and each window is a renderer that works out the room's lighting again
-    before its first frame (see ``_IRRADIANCE_PX``), and again after the other one has
-    drawn. That is cheap on a GPU and was most of the cost without one: ``dense.perf``'s 33
-    steps took the macOS CI runner 181 s that way and take it 85 s this way. The drift was
-    a bug as well as a cost -- a component-side step after the first flip came out up to 23
-    levels in 255 away from the same step drawn on its own.
-
-    ``progress`` is told ``(done, total)`` after every picture, and returning False stops:
-    the set then comes back EMPTY rather than as some of the pictures, because a guide
-    illustrated up to step 30 of 83 reads as a guide whose last steps went wrong.
-    It is how the window keeps somebody informed through the minute a big board takes --
-    the render stays on the thread that owns the GL context, which is the only one it can
-    run on, and the caller pumps its events from here.
-    """
-    steps = all_steps(guide)
-    if not steps:
+    """Render the whole board after each group, spotlighting the work on each face."""
+    groups = [group for phase in guide.phases for group in step_groups(phase, language=guide.language)]
+    frames: list[tuple[int, bool, tuple[str, ...]]] = []
+    done = 0
+    for group in groups:
+        done += len(group)
+        frames.extend(
+            (done - 1, bottom, tuple(step_focus(step) for step in work))
+            for bottom, work in step_groups_by_face(group)
+        )
+    if not frames:
         return {}
 
     ren, _stats = build_renderer(doc, lookup)
@@ -8624,50 +8614,16 @@ def render_step_images(
         cameras[flipped] = camera
 
     images: dict[str, bytes] = {}
-    for index, step in enumerate(steps):
-        focus = step_focus(step)
-        subject: list[vtk.vtkActor] = []
+    for number, (index, flipped, focus) in enumerate(frames, start=1):
         populate_renderer(
             ren,
             document_at_step(doc, guide, index),
             lookup,
-            highlight=focus,
-            subject_actors=subject,
+            highlight=frozenset(focus),
+            guide_mounts=True,
         )
-        flipped = step_is_solder_side(doc, focus)
-        frame_step(ren, cameras[flipped], subject)
-        if subject:
-            for actor in _actors(ren):
-                prop = actor.GetProperty()
-                if actor in subject:
-                    # A constant, bright finish keeps thin wires visible under any lighting.
-                    prop.SetColor(1.0, 0.68, 0.05)
-                    prop.LightingOff()
-                else:
-                    _dim(actor)
-
-        holes: tuple[HoleCoord, ...]
-        if isinstance(step, ConductorStep):
-            holes = (step.path[0], step.path[-1])
-        else:
-            holes = tuple(hole for _pin, hole in step.pin_holes)
-        face: BoardSide = "bottom" if flipped else "top"
-        radius = doc.board.pad_diameter / 2 + 0.45
-        ring = vtk.vtkDiskSource()
-        ring.SetInnerRadius(radius - 0.35)
-        ring.SetOuterRadius(radius)
-        ring.SetCircumferentialResolution(32)
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(ring.GetOutputPort())
-        for hole in dict.fromkeys(holes):
-            marker = vtk.vtkActor()
-            marker.SetMapper(mapper)
-            x, y = _xy(doc.board, hole)
-            z = pad_z(doc.board, face) + (-0.2 if flipped else 0.2)
-            marker.SetPosition(x, y, z)
-            marker.GetProperty().SetColor(1.0, 0.68, 0.05)
-            marker.GetProperty().LightingOff()
-            ren.AddActor(marker)
+        ren.GetActiveCamera().DeepCopy(cameras[flipped])
+        ren.ResetCameraClippingRange()
         win.Render()
         grab = vtk.vtkWindowToImageFilter()
         grab.SetInput(win)
@@ -8678,8 +8634,8 @@ def render_step_images(
         writer.SetInputConnection(grab.GetOutputPort())
         writer.Write()
         jpeg = numpy_support.vtk_to_numpy(writer.GetResult())  # type: ignore[no-untyped-call]
-        images[focus] = bytes(jpeg.tobytes())
-        if progress is not None and not progress(index + 1, len(steps)):
+        images[focus[0]] = bytes(jpeg.tobytes())
+        if progress is not None and not progress(number, len(frames)):
             return {}
     return images
 

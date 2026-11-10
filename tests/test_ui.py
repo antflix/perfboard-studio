@@ -3519,10 +3519,15 @@ def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
 
 
 @requires_offscreen_gl
-def test_every_step_gets_a_picture_of_its_own() -> None:
-    """PLAN.md §7.2. Keyed by guide.step_focus, which is what guide_export looks them up
-    by, so a mismatch here shows as a guide with no illustrations rather than a crash."""
-    from perfboard_studio.guide import all_steps, build_guide, step_focus
+def test_each_group_gets_a_picture_per_face() -> None:
+    """Each picture is keyed by the first action on that group's face."""
+    from perfboard_studio.guide import (
+        all_steps,
+        build_guide,
+        step_focus,
+        step_groups,
+        step_groups_by_face,
+    )
     from perfboard_studio.ui import view3d
 
     doc = _load_dense()
@@ -3531,7 +3536,13 @@ def test_every_step_gets_a_picture_of_its_own() -> None:
 
     images = view3d.render_step_images(doc, guide, lookup, width=200, height=140)
 
-    assert set(images) == {step_focus(step) for step in all_steps(guide)}
+    frames = {
+        step_focus(work[0])
+        for phase in guide.phases for group in step_groups(phase)
+        for _, work in step_groups_by_face(group)
+    }
+    assert set(images) == frames
+    assert len(images) < len(all_steps(guide))
     # JPEG, and the guide's size is why: these are photographs of a lit 3D scene, which
     # PNG stores at ~136 KB each against JPEG's 47 KB, and every one of them is base64ed
     # into a single file somebody opens on a phone.
@@ -3542,13 +3553,13 @@ def test_every_step_gets_a_picture_of_its_own() -> None:
 def test_the_step_pictures_report_as_they_go_and_stop_when_told() -> None:
     """Stopped part-way, the set comes back EMPTY: a guide illustrated up to step 2 of 30
     reads as a guide whose last steps went wrong."""
-    from perfboard_studio.guide import all_steps, build_guide
+    from perfboard_studio.guide import build_guide, step_groups, step_groups_by_face
     from perfboard_studio.ui import view3d
 
     doc = _load_dense()
     lookup = footprint_lookup()
     guide = build_guide(doc, lookup)
-    total = len(all_steps(guide))
+    total = sum(len(step_groups_by_face(group)) for phase in guide.phases for group in step_groups(phase))
     told: list[tuple[int, int]] = []
 
     def progress(done: int, of: int) -> bool:
@@ -3631,13 +3642,18 @@ def test_a_step_looks_the_same_whichever_face_was_drawn_before_it(monkeypatch) -
     import numpy as np
     import vtkmodules.all as vtk
 
-    from perfboard_studio.guide import all_steps, build_guide, document_at_step, step_focus
+    from perfboard_studio.guide import (
+        build_guide,
+        document_at_step,
+        step_focus,
+        step_groups,
+        step_groups_by_face,
+    )
     from perfboard_studio.ui import view3d
 
     doc = _load_dense()
     lookup = footprint_lookup()
     guide = build_guide(doc, lookup)
-    steps = all_steps(guide)
     size = (160, 106)
 
     built = []
@@ -3649,24 +3665,24 @@ def test_a_step_looks_the_same_whichever_face_was_drawn_before_it(monkeypatch) -
     monkeypatch.undo()
     assert len(built) == 1
 
-    sides = [view3d.step_is_solder_side(doc, step_focus(step)) for step in steps]
-    index = next(i for i in range(1, len(steps)) if sides[i - 1] and not sides[i])
-    focus = step_focus(steps[index])
+    frames = []
+    done = 0
+    for phase in guide.phases:
+        for group in step_groups(phase):
+            done += len(group)
+            frames.extend((done - 1, bottom, work) for bottom, work in step_groups_by_face(group))
+    index, _, work = next(current for previous, current in itertools.pairwise(frames) if previous[1] and not current[1])
+    focus = step_focus(work[0])
     ren, _stats = view3d.build_renderer(doc, lookup)
     win = vtk.vtkRenderWindow()
     win.SetOffScreenRendering(1)
     win.AddRenderer(ren)
     win.SetSize(*size)
-    # Framed in the window's shape and then on the step, as render_step_images frames it (a
-    # component-side step).
     view3d.apply_default_camera(ren, False)
-    whole_board = vtk.vtkCamera()
-    whole_board.DeepCopy(ren.GetActiveCamera())
-    subject: list = []
     view3d.populate_renderer(
-        ren, document_at_step(doc, guide, index), lookup, highlight=focus, subject_actors=subject
+        ren, document_at_step(doc, guide, index), lookup,
+        highlight=frozenset(step_focus(step) for step in work), guide_mounts=True,
     )
-    view3d.frame_step(ren, whole_board, subject)
     win.Render()
     grab = vtk.vtkWindowToImageFilter()
     grab.SetInput(win)
@@ -4942,7 +4958,7 @@ def test_new_net_creates_it_and_goes_straight_into_picking_its_pins() -> None:
     window = _window_on(_load_dense())
     before = {n.id for n in window.bus.document.nets}
     window.on_new_net()
-    (net,) = [n for n in window.bus.document.nets if n.id not in before]
+    (net,) = (n for n in window.bus.document.nets if n.id not in before)
     assert window.scene.armed_net_id == net.id
     assert window.inspector.shown is window.inspector.net_editor
     assert window.inspector.net_editor.name.text() == net.name
@@ -15098,7 +15114,7 @@ def test_add_label_writes_one_and_puts_the_keyboard_in_its_text() -> None:
     real = window.inspector.focus_field
     window.inspector.focus_field = lambda name: (focused.append(name), real(name))[1]
     window.on_add_board_label()
-    (note,) = [n for n in window.bus.document.board_notes if n.id not in before]
+    (note,) = (n for n in window.bus.document.board_notes if n.id not in before)
     assert note.text == t("Label")
     editor = window.inspector.board_note_editor
     assert window.inspector.shown is editor and focused == ["text"]
@@ -16628,7 +16644,7 @@ def test_a_shipped_example_opens_with_no_problem_and_its_bench_check_listed() ->
             for i in range(window.drc_tree.topLevelItemCount())
             for j in range(window.drc_tree.topLevelItem(i).childCount())
         ]
-        (bench,) = [g for g in groups if g.data(0, ROLE_FINDING_KEY) == "drc:solder-trace-proximity"]
+        (bench,) = (g for g in groups if g.data(0, ROLE_FINDING_KEY) == "drc:solder-trace-proximity")
         assert bench.text(0) == "To check at the bench"
         leaf = bench.child(0)
         while leaf.childCount():
@@ -16660,7 +16676,7 @@ def test_a_bench_check_picked_in_the_drawer_rings_its_holes_over_the_parts() -> 
             for i in range(window.drc_tree.topLevelItemCount())
             for j in range(window.drc_tree.topLevelItem(i).childCount())
         ]
-        (bench,) = [g for g in groups if g.data(0, ROLE_FINDING_KEY) == "drc:solder-trace-proximity"]
+        (bench,) = (g for g in groups if g.data(0, ROLE_FINDING_KEY) == "drc:solder-trace-proximity")
         leaf = bench.child(0)
         while leaf.childCount():
             leaf = leaf.child(0)
@@ -17178,7 +17194,7 @@ def test_a_cabled_step_on_the_bench_gives_its_leads_once() -> None:
     window = _window_on(_cabled_document())
     try:
         bench = _bench(window)
-        (item,) = [i for i in bench.items if i.component_id == "c1"]
+        (item,) = (i for i in bench.items if i.component_id == "c1")
         assert t("Holes") not in {what for what, _value in item.facts}
         assert any("VCC" in note or "GND" in note for note in item.notes)
     finally:
@@ -17686,7 +17702,7 @@ def test_the_harness_step_is_said_in_the_guides_language() -> None:
             cable = _bench(window).items[-1]
             assert cable.phase.title == "Kablo demeti"
             say = phrasebook("tr")
-            (wires,) = [c.wires for c in window.current_guide().harness]
+            (wires,) = (c.wires for c in window.current_guide().harness)
             colours = {say(wire.colour) for wire in wires}
             assert colours and colours <= {what for what, _value in cable.facts}
             assert ("Kesilecek tel", "150 mm · AWG 24") in cable.facts or any(

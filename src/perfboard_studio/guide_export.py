@@ -43,7 +43,7 @@ from typing import Any
 
 from .breadboard import has_breadboard_pattern, is_breadboard, is_solderable_breadboard
 from .drc import MATERIAL_LABELS
-from .geometry import board_size_mm, format_hole, holeless_positions
+from .geometry import board_size_mm, column_label, format_hole, holeless_positions, row_label
 from .guide import (
     JSON_OMITTED_AT_DEFAULT,
     TEMPLATE_MARGIN_MM,
@@ -62,6 +62,8 @@ from .guide import (
     is_guide_gap,
     lead_end,
     step_focus,
+    step_groups,
+    step_groups_by_face,
     wire_template,
 )
 from .harness import HarnessEnd
@@ -314,6 +316,11 @@ p  { margin: .4rem 0; }
 a  { color: var(--accent); }
 .sub { color: var(--dim); }
 .phase { border-top: 2px solid var(--line); padding-top: .5rem; margin-top: 2rem; }
+.work-group { margin: 1.3rem 0; }
+.work-group h3 { color: var(--text); text-transform: none; letter-spacing: normal; }
+.work-group figure { margin: .6rem 0; }
+.work-group figcaption { color: var(--dim); font-size: .875rem; }
+.work-group .shot, .cut-map { display: block; width: 100%; max-width: none; }
 .phase-num { color: var(--accent); font-variant-numeric: tabular-nums; }
 .step, .check {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -435,8 +442,8 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     Deliberately not a framework. This file has to open from a USB stick on a phone in
     five years' time, which rules out every dependency that could stop existing.
 
-    ``step_images`` are the illustrations PLAN.md §7.2 asks for, keyed by
-    ``guide.step_focus(step)``. **Raw image bytes, not URLs or paths** — this function
+    ``step_images`` contains one whole-board image per group and face, keyed by the
+    ``guide.step_focus`` of its first action. **Raw image bytes, not URLs or paths** — this function
     base64s them into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
     beside it, or a phone's network. Rendering them needs VTK and a real board, which is
@@ -517,9 +524,25 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
             + f"</span> — {escape(phase.title)}</h2>"
             f'<p class="sub">{escape(phase.summary)}</p>'
         )
-        for step in phase.steps:
-            step_id += 1
-            parts.append(_html_step(step, f"s{step_id}", images, say, guide.board))
+        for group in step_groups(phase, language=guide.language):
+            first = group[0]
+            title = (
+                say("Wire net {net}", net=first.net_name)
+                if isinstance(first, ConductorStep)
+                else say("Fit {parts}", parts=", ".join(
+                    step.ref for step in group if isinstance(step, PartStep)
+                ))
+            )
+            parts.append(f'<section class="work-group"><h3>{escape(title)}</h3>')
+            for bottom, work in step_groups_by_face(group):
+                face = say("Copper side" if bottom else "Component side")
+                picture = _html_step_image(work[0], images, f"{title} · {face}")
+                if picture:
+                    parts.append(f"<figure>{picture}<figcaption>{escape(face)}</figcaption></figure>")
+            for step in group:
+                step_id += 1
+                parts.append(_html_step(step, f"s{step_id}", say, guide.board))
+            parts.append("</section>")
         if phase.checkpoints:
             parts.append("<h3>" + say("Check before moving on") + "</h3>")
             for check in phase.checkpoints:
@@ -599,9 +622,44 @@ def _html_cuts(guide: Guide, say: Phrasebook) -> str:
     return (
         "<h3>" + say("Cut these tracks first") + "</h3><p>"
         + instructions
-        + '</p><div class="wrap"><table>'
+        + "</p>" + _cut_map(guide, say) + '<div class="wrap"><table>'
         f"<tr><th>{say('Hole')}</th><th>{say('Strip')}</th><th>{say('Separates')}</th></tr>"
         f"{rows}</table></div>"
+    )
+
+
+def _cut_map(guide: Guide, say: Phrasebook) -> str:
+    """Whole copper face, mirrored left to right from component-side addresses."""
+    cols, rows = guide.board.cols, guide.board.rows
+    holes = "".join(
+        f'<circle cx="{x}" cy="{y}" r=".16"/>'
+        for y in range(rows) for x in range(cols)
+    )
+    labels = "".join(
+        f'<text x="{x}" y="-.68">{column_label(cols - 1 - x)}</text>' for x in range(cols)
+    ) + "".join(
+        f'<text x="-.91" y="{y+.13}">{row_label(y)}</text>' for y in range(rows)
+    )
+    marks = []
+    for cut in guide.track_cuts:
+        end = cut.to or cut.at
+        x = cols - 1 - (cut.at.col + end.col) / 2
+        y = (cut.at.row + end.row) / 2
+        marks.append(
+            f'<path d="M{x-.23} {y-.23}l.46 .46m-.46 0l.46 -.46">'
+            f'<title>{escape(format_hole(cut.at, guide.board))}'
+            + (f' – {escape(format_hole(end, guide.board))}' if cut.to else "")
+            + '</title></path>'
+        )
+    caption = escape(say("Copper side · A1 at upper right · red marks show cuts"))
+    return (
+        f'<figure><svg class="cut-map" viewBox="-1.5 -1.4 {cols+1.5} {rows+1.4}" role="img" aria-label="{caption}">'
+        f'<rect x="-.5" y="-.5" width="{cols}" height="{rows}" fill="#25443b"/>'
+        f'<g fill="currentColor" text-anchor="middle" font-size=".38">{labels}</g>'
+        f'<g fill="#cab17c">{holes}</g>'
+        f'<g stroke="#ff665f" stroke-width=".15" stroke-linecap="round">{"".join(marks)}</g>'
+        f'<circle cx="{cols-1}" cy="0" r=".29" fill="none" stroke="white" stroke-width=".07"/>'
+        f'</svg><figcaption>{caption}</figcaption></figure>'
     )
 
 
@@ -676,12 +734,11 @@ def _html_breadboard(guide: Guide, say: Phrasebook) -> str:
 
 
 def _html_step(
-    step: GuideStep, dom_id: str, images: Mapping[str, bytes], say: Phrasebook, board: Board
+    step: GuideStep, dom_id: str, say: Phrasebook, board: Board
 ) -> str:
-    picture = _html_step_image(step, images)
     if isinstance(step, PartStep):
-        return _html_part_step(step, dom_id, picture, say, board=board)
-    return _html_conductor_step(step, dom_id, picture, say, wire_template(step, board), board=board)
+        return _html_part_step(step, dom_id, say=say, board=board)
+    return _html_conductor_step(step, dom_id, say=say, template=wire_template(step, board), board=board)
 
 
 #: Magic bytes to media type, longest signature first. A data URI carries its own type,
@@ -711,19 +768,14 @@ def _image_media_type(data: bytes) -> str:
     return "application/octet-stream"
 
 
-def _html_step_image(step: GuideStep, images: Mapping[str, bytes]) -> str:
-    """The board as it stands at this step, with this step's own part picked out.
-
-    Inlined as a data URI. The alt text is the step's title rather than "step image":
-    printed, or read aloud, or opened where the picture will not load, the sentence that
-    survives has to be the one that says what to do.
-    """
+def _html_step_image(step: GuideStep, images: Mapping[str, bytes], title: str) -> str:
+    """Inline the whole-board picture for the first action on this face."""
     picture = images.get(step_focus(step))
     if not picture:
         return ""
     encoded = base64.b64encode(picture).decode("ascii")
     return (
-        f'<img class="shot" alt="{escape(step.title)}" '
+        f'<img class="shot" alt="{escape(title)}" '
         f'src="data:{_image_media_type(picture)};base64,{encoded}">'
     )
 

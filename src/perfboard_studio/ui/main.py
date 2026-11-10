@@ -14017,7 +14017,7 @@ class MainWindow(QMainWindow):
         )
 
     def _render_step_images(self, document: PerfDocument, guide: Guide) -> dict[str, bytes] | None:
-        """One 3D picture per build step, counted out loud, with a way to do without them.
+        """Whole-board pictures for the work groups, counted out loud, with a way to do without them.
 
         None when the user chose to skip the pictures; empty where there is nothing to
         render into. On a machine with no offscreen GL -- a VM, a remote session, an old

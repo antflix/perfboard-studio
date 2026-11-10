@@ -933,6 +933,12 @@ TURKISH: dict[str, str] = {
         "{steps} adım, {checks} kontrol · Perfboard Studio {version}"
     ),
     "Phase {number}": "Aşama {number}",
+    "Wire net {net}": "{net} ağını bağlayın",
+    "Fit {parts}": "{parts} parçalarını takın",
+    "Copper side": "Bakır yüz",
+    "Component side": "Bileşen yüzü",
+    "Copper side · A1 at upper right · red marks show cuts":
+        "Bakır yüz · A1 sağ üstte · kırmızı işaretler kesimleri gösterir",
     "Check before moving on": "Devam etmeden önce kontrol edin",
     " of ": " / ",
     " done": " tamam",

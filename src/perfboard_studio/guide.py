@@ -55,6 +55,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache, partial
+from itertools import groupby
 from typing import TYPE_CHECKING, Literal, get_args
 
 from .breadboard import has_breadboard_pattern, has_rails, is_breadboard
@@ -3039,6 +3040,29 @@ def all_checkpoints(guide: Guide) -> tuple[Checkpoint, ...]:
 
 def all_steps(guide: Guide) -> tuple[GuideStep, ...]:
     return tuple(step for phase in guide.phases for step in phase.steps)
+
+
+def step_groups(phase: GuidePhase, *, language: GuideLanguage = "en") -> tuple[tuple[GuideStep, ...], ...]:
+    """Batch adjacent work while respecting phase boundaries and fit order."""
+
+    unassigned = phrasebook(language)("(unassigned)")
+
+    def key(step: GuideStep) -> tuple[str, str, bool]:
+        if isinstance(step, PartStep):
+            return "fit", step.footprint_name, step.mirrored
+        # Unassigned conductors have no common net to build.
+        return "wire", step.net_name if step.net_name != unassigned else step.conductor_id, False
+
+    return tuple(tuple(group) for _, group in groupby(phase.steps, key))
+
+
+def step_groups_by_face(group: tuple[GuideStep, ...]) -> tuple[tuple[bool, tuple[GuideStep, ...]], ...]:
+    """A net may need a separate picture on each face."""
+    faces: dict[bool, list[GuideStep]] = {}
+    for step in group:
+        bottom = step.mirrored if isinstance(step, PartStep) else step.side == "bottom"
+        faces.setdefault(bottom, []).append(step)
+    return tuple((bottom, tuple(steps)) for bottom, steps in faces.items())
 
 
 def step_focus(step: GuideStep) -> str:

@@ -29,7 +29,6 @@ import csv
 import dataclasses
 import io
 import json
-from html import escape
 from pathlib import Path
 
 import pytest
@@ -62,6 +61,8 @@ from perfboard_studio.guide import (
     document_at_step,
     net_colours,
     step_focus,
+    step_groups,
+    step_groups_by_face,
     wire_template,
 )
 from perfboard_studio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
@@ -1281,12 +1282,17 @@ def test_a_step_with_no_picture_is_still_a_complete_step() -> None:
 def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
     doc = routed_ne555()
     guide = build_guide(doc, REGISTRY)
-    steps = all_steps(guide)
-    some = {step_focus(s): b"\x89PNG fake" for s in steps[:3]}
+    groups = [group for phase in guide.phases for group in step_groups(phase)]
+    assert tuple(step for group in groups for step in group) == all_steps(guide)
+    assert any(len(group) > 1 for group in groups)
+    faces = [work for group in groups for _, work in step_groups_by_face(group)]
+    some = {step_focus(work[0]): b"\x89PNG fake" for work in faces[:3]}
 
     html = guide_to_html(guide, some)
 
     assert html.count("<img") == 3
+    assert html.count('class="work-group"') == len(groups)
+    assert html.count('class="step"') == guide.total_steps
 
 
 @pytest.mark.parametrize(
@@ -1330,7 +1336,8 @@ def test_the_picture_is_labelled_with_what_to_do_not_with_what_it_is() -> None:
 
     html = guide_to_html(guide, {step_focus(first): b"\x89PNG fake"})
 
-    assert f'alt="{escape(first.title)}"' in html
+    assert 'alt="Fit ' in html
+    assert " · Component side" in html
 
 
 def test_a_wire_laid_along_the_grid_is_soldered_at_its_two_ends() -> None:
