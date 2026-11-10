@@ -938,6 +938,13 @@ TURKISH: dict[str, str] = {
     " done": " tamam",
     "Reset progress": "İlerlemeyi sıfırla",
     "Cut these tracks first": "Önce bu şeritleri kesin",
+    "{count} track cut(s). A single hole marks a cut through that pad. "
+    "Two hole addresses mark a cut in the copper between those holes. "
+    "Make the cuts from the copper side before fitting parts.": (
+        "{count} şerit kesiği. Tek bir delik, o pedin üzerinden yapılan kesiği gösterir. "
+        "İki delik adresi, deliklerin arasındaki bakırda yapılan kesiği gösterir. "
+        "Parçaları takmadan önce kesikleri bakır yüzden yapın."
+    ),
     "{count} cut(s), made from the copper side with a spot-face cutter or a 3 mm drill "
     "turned by hand. Each one takes the pad with it, so the hole it is made in has nothing "
     "to solder to afterwards. Do them all before the first part goes in — once a part is "
@@ -1163,3 +1170,4 @@ __all__ = [
     "matching_template",
     "phrasebook",
 ]
+

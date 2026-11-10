@@ -1785,9 +1785,9 @@ TURKISH: Mapping[str, str] = {
     ),
     "That block does not fit on this board.": "O blok bu karta sığmıyor.",
     "There are no parts on this board yet.": "Bu kartta henüz parça yok.",
-    "Click a hole to cut the strip there; click a cut again to take it back. "
+    "Click a hole or between holes to cut the strip; click a cut again to take it back. "
     "Esc ends.": (
-        "Şeridi kesmek için bir deliğe tıklayın; kesiği geri almak için tekrar tıklayın. "
+        "Şeridi kesmek için bir deliğe veya deliklerin arasına tıklayın; kesiği geri almak için tekrar tıklayın. "
         "Esc bitirir."
     ),
     "This board has never been saved, so there is nothing on disk to reload.": (
@@ -4715,3 +4715,4 @@ def t(text: str) -> str:
 
 
 __all__ = ["AVAILABLE", "CATALOGUES", "TURKISH", "language", "set_language", "t"]
+

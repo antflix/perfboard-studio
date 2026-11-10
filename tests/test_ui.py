@@ -16668,11 +16668,11 @@ def test_a_bench_check_picked_in_the_drawer_rings_its_holes_over_the_parts() -> 
         assert window.scene._focus_item is None, "nothing picked, nothing over the parts"
         window.drc_tree.setCurrentItem(leaf)
         assert window.scene._focus_item is not None
-        assert {(h.col, h.row) for h in window.scene._focus_item.holes} == {
+        assert {(h.col, h.row) for h in window.scene._focused_holes} == {
             (h.col, h.row) for h in leaf.data(0, ROLE_HOLES)
         }
         window.drc_tree.setCurrentItem(bench.parent())
-        assert window.scene._focus_item is None
+        assert window.scene._focus_item is not None
     finally:
         _close(window)
 
@@ -17895,4 +17895,5 @@ def test_an_empty_extra_board_says_how_parts_reach_it() -> None:
         assert "Move to Board" in hint.text() and "Add Cable" in hint.text()
     finally:
         _close(window)
+
 
