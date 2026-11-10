@@ -467,7 +467,9 @@ def _run_board(
     # needs a graphics driver.
     can_render_3d = view3d.offscreen_gl_available()
     t0 = time.perf_counter()
-    images = view3d.render_step_images(doc, guide, lookup) if can_render_3d else {}
+    from .guide_images import render_guide_images
+
+    images = render_guide_images(doc, guide, lookup)
     t_shots = (time.perf_counter() - t0) * 1000
     html = guide_to_html(guide, images)
     (out_dir / "guide.html").write_text(html, encoding="utf-8")
@@ -488,7 +490,7 @@ def _run_board(
     for warning in guide.warnings:
         print(f"  ! {warning.code}: {warning.message}")
 
-    # --- 3D render, offscreen: the build-guide image path ---
+    # --- 3D render, offscreen ---
     if not can_render_3d:
         # Said loudly rather than skipped quietly, and NOT an error: nothing is wrong
         # with the document, and every check this run exists to perform has already run.

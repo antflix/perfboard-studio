@@ -1866,7 +1866,6 @@ def test_autoplace_on_an_empty_board_says_so_rather_than_running(monkeypatch) ->
 # ---------------------------------------------------------------------------
 
 
-@requires_offscreen_gl  # on_export_guide renders a step image per step
 def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> None:
     from perfboard_studio.ui import main as main_module
 
@@ -1894,7 +1893,6 @@ def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> Non
     window.close()
 
 
-@requires_offscreen_gl  # same export path, so the same step images
 def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, monkeypatch) -> None:
     """Each warning says the guide describes less than the whole build. A user who misses
     that follows the steps to the end and finds the board does not work."""
@@ -1921,7 +1919,6 @@ def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, m
     window.close()
 
 
-@requires_offscreen_gl  # the render is stubbed, but the scanner reads on_export_guide
 def test_the_step_pictures_are_counted_and_can_be_skipped(tmp_path, monkeypatch) -> None:
     """They take about forty seconds on atmega328-relay and used to be a wait cursor and
     nothing else, which Windows calls "Not Responding". The render reports after every
@@ -1929,13 +1926,12 @@ def test_the_step_pictures_are_counted_and_can_be_skipped(tmp_path, monkeypatch)
     the window is handed back either way."""
     from PySide6.QtWidgets import QProgressDialog
 
+    from perfboard_studio.ui import guide_images
     from perfboard_studio.ui import main as main_module
-    from perfboard_studio.ui import view3d
 
     window = _window_on(_load_dense())
     window.current_path = tmp_path / "board.perf"
     monkeypatch.setattr(main_module.MainWindow, "PLANNER_GRACE_S", 0.0)
-    monkeypatch.setattr(view3d, "offscreen_gl_available", lambda: True)
     monkeypatch.setattr(
         "perfboard_studio.ui.main.QMessageBox.warning", lambda *args, **kwargs: None
     )
@@ -1958,19 +1954,18 @@ def test_the_step_pictures_are_counted_and_can_be_skipped(tmp_path, monkeypatch)
                 return {}
         return {"never": b""}
 
-    monkeypatch.setattr(view3d, "render_step_images", fake_render)
+    monkeypatch.setattr(guide_images, "render_guide_images", fake_render)
 
     window.on_export_guide()
 
     assert seen == [(1, 3), (2, 3)]
     assert all(guarded)
     html = (tmp_path / "board_guide.html").read_text(encoding="utf-8")
-    assert "data:image/jpeg" not in html
+    assert 'class="shot"' not in html
     assert window.isEnabled() and not window._planner_running
     _close(window)
 
 
-@requires_offscreen_gl  # cancelled before any render, but the scanner reads on_export_guide
 def test_every_export_asks_where_and_suggests_what_it_used_to_write(tmp_path, monkeypatch) -> None:
     """They wrote fixed names beside the board without a word, overwriting what was there,
     behind menu items whose "…" promised a question. The suggestion is the old name, so
@@ -2321,7 +2316,6 @@ def test_in_turkish_the_guide_panel_is_in_turkish() -> None:
         set_language(before)
 
 
-@requires_offscreen_gl  # nothing is rendered, but the scanner reads on_export_guide
 def test_a_turkish_window_exports_a_turkish_guide(tmp_path, monkeypatch) -> None:
     """The file a Turkish builder prints is the guide in their language -- the same one
     the panel beside the board lists, not the English it used to be."""
@@ -3518,223 +3512,34 @@ def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
     ]
 
 
-@requires_offscreen_gl
-def test_each_group_gets_a_picture_per_face() -> None:
-    """Each picture is keyed by the first action on that group's face."""
-    from perfboard_studio.guide import (
-        all_steps,
-        build_guide,
-        step_focus,
-        step_groups,
-        step_groups_by_face,
-    )
-    from perfboard_studio.ui import view3d
+def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> None:
+    from perfboard_studio.guide import build_guide, step_focus, step_groups, step_groups_by_face
+    from perfboard_studio.ui import guide_images
 
     doc = _load_dense()
     lookup = footprint_lookup()
     guide = build_guide(doc, lookup)
-
-    images = view3d.render_step_images(doc, guide, lookup, width=200, height=140)
-
-    frames = {
-        step_focus(work[0])
+    frames = [
+        (bottom, work)
         for phase in guide.phases for group in step_groups(phase)
-        for _, work in step_groups_by_face(group)
-    }
-    assert set(images) == frames
-    assert len(images) < len(all_steps(guide))
-    # JPEG, and the guide's size is why: these are photographs of a lit 3D scene, which
-    # PNG stores at ~136 KB each against JPEG's 47 KB, and every one of them is base64ed
-    # into a single file somebody opens on a phone.
-    assert all(shot.startswith(b"\xff\xd8\xff") for shot in images.values())
+        for bottom, work in step_groups_by_face(group)
+    ]
+    seen = []
+    original = guide_images.BoardScene.set_problem_focus
 
+    def focus(scene, holes, conductors, components):
+        ruler = next(item for item in scene.items() if isinstance(item, guide_images.HoleRulerItem))
+        seen.append((scene.side, (*components, *conductors), ruler.label_px))
+        original(scene, holes, conductors, components)
 
-@requires_offscreen_gl
-def test_the_step_pictures_report_as_they_go_and_stop_when_told() -> None:
-    """Stopped part-way, the set comes back EMPTY: a guide illustrated up to step 2 of 30
-    reads as a guide whose last steps went wrong."""
-    from perfboard_studio.guide import build_guide, step_groups, step_groups_by_face
-    from perfboard_studio.ui import view3d
-
-    doc = _load_dense()
-    lookup = footprint_lookup()
-    guide = build_guide(doc, lookup)
-    total = sum(len(step_groups_by_face(group)) for phase in guide.phases for group in step_groups(phase))
-    told: list[tuple[int, int]] = []
-
-    def progress(done: int, of: int) -> bool:
-        told.append((done, of))
-        return done < 2
-
-    images = view3d.render_step_images(doc, guide, lookup, 120, 80, progress=progress)
-
-    assert told == [(1, total), (2, total)]
-    assert images == {}
-
-
-def test_a_step_frame_is_its_subject_with_board_enough_to_count_from() -> None:
-    """Framed on the whole board, a resistor on a 9 x 15 cm board was a few pixels of
-    highlight. Framed on itself, it would say nothing about where it goes. So: the subject,
-    widened about its own centre to STEP_CONTEXT_MM across the board, its height its own."""
-    from perfboard_studio.ui.view3d import STEP_CONTEXT_MM, step_frame_bounds
-
-    resistor = step_frame_bounds((70.0, 80.0, -50.0, -46.0, -1.0, 4.0))
-    half = STEP_CONTEXT_MM / 2
-    assert resistor == pytest.approx((75 - half, 75 + half, -48 - half, -48 + half, -1.0, 4.0))
-
-    long_wire = step_frame_bounds((10.0, 120.0, -45.0, -44.0, -2.0, -1.0))
-    assert long_wire[:2] == pytest.approx((10.0, 120.0))
-    assert long_wire[3] - long_wire[2] == pytest.approx(STEP_CONTEXT_MM)
-
-
-@requires_offscreen_gl
-def test_a_step_picture_comes_in_on_its_subject_and_never_backs_out_past_the_board() -> None:
-    """The direction is the face's and only the distance and the aim follow the step, so
-    the pages still read as one board; nothing to frame on, or something bigger than the
-    board, gets the whole board."""
-    import vtkmodules.all as vtk
-
-    from perfboard_studio.guide import all_steps, build_guide, step_focus
-    from perfboard_studio.ui import view3d
-
-    doc = _load_dense()
-    lookup = footprint_lookup()
-    focus = step_focus(all_steps(build_guide(doc, lookup))[0])
-    ren, _stats = view3d.build_renderer(doc, lookup)
-    win = vtk.vtkRenderWindow()
-    win.SetOffScreenRendering(1)
-    win.AddRenderer(ren)
-    win.SetSize(160, 106)
-    view3d.apply_default_camera(ren, False)
-    whole_board = vtk.vtkCamera()
-    whole_board.DeepCopy(ren.GetActiveCamera())
-
-    subject: list = []
-    view3d.populate_renderer(ren, doc, lookup, highlight=focus, subject_actors=subject)
-    assert subject
-    view3d.frame_step(ren, whole_board, subject)
-    camera = ren.GetActiveCamera()
-    assert camera.GetDistance() < whole_board.GetDistance()
-    assert camera.GetDirectionOfProjection() == pytest.approx(
-        whole_board.GetDirectionOfProjection()
-    )
-
-    view3d.frame_step(ren, whole_board, [])
-    assert camera.GetPosition() == pytest.approx(whole_board.GetPosition())
-
-    huge = vtk.vtkActor()
-    huge.SetMapper(vtk.vtkPolyDataMapper())
-    cube = vtk.vtkCubeSource()
-    cube.SetBounds(-1e4, 1e4, -1e4, 1e4, 0.0, 1.0)
-    huge.GetMapper().SetInputConnection(cube.GetOutputPort())
-    ren.AddActor(huge)
-    view3d.frame_step(ren, whole_board, [huge])
-    assert camera.GetPosition() == pytest.approx(whole_board.GetPosition())
-
-
-@requires_offscreen_gl
-def test_a_step_looks_the_same_whichever_face_was_drawn_before_it(monkeypatch) -> None:
-    """The step images used to come from two windows, one a face, sharing one room. Drawing
-    the solder side made the component window work its lighting out again, and every
-    component-side step after the first flip came out up to 23 levels in 255 away from the
-    same step drawn on its own. That second precompute, and the one for the second window,
-    were also most of the cost on a machine with no GPU. So: one renderer, two cameras."""
-    import numpy as np
-    import vtkmodules.all as vtk
-
-    from perfboard_studio.guide import (
-        build_guide,
-        document_at_step,
-        step_focus,
-        step_groups,
-        step_groups_by_face,
-    )
-    from perfboard_studio.ui import view3d
-
-    doc = _load_dense()
-    lookup = footprint_lookup()
-    guide = build_guide(doc, lookup)
-    size = (160, 106)
-
-    built = []
-    build_renderer = view3d.build_renderer
-    monkeypatch.setattr(
-        view3d, "build_renderer", lambda *a, **k: built.append(a) or build_renderer(*a, **k)
-    )
-    images = view3d.render_step_images(doc, guide, lookup, *size)
-    monkeypatch.undo()
-    assert len(built) == 1
-
-    frames = []
-    done = 0
-    for phase in guide.phases:
-        for group in step_groups(phase):
-            done += len(group)
-            frames.extend((done - 1, bottom, work) for bottom, work in step_groups_by_face(group))
-    index, _, work = next(current for previous, current in itertools.pairwise(frames) if previous[1] and not current[1])
-    focus = step_focus(work[0])
-    ren, _stats = view3d.build_renderer(doc, lookup)
-    win = vtk.vtkRenderWindow()
-    win.SetOffScreenRendering(1)
-    win.AddRenderer(ren)
-    win.SetSize(*size)
-    view3d.apply_default_camera(ren, False)
-    view3d.populate_renderer(
-        ren, document_at_step(doc, guide, index), lookup,
-        highlight=frozenset(step_focus(step) for step in work), guide_mounts=True,
-    )
-    win.Render()
-    grab = vtk.vtkWindowToImageFilter()
-    grab.SetInput(win)
-    grab.Update()
-    writer = vtk.vtkJPEGWriter()
-    writer.SetQuality(view3d.STEP_IMAGE_JPEG_QUALITY)
-    writer.WriteToMemoryOn()
-    writer.SetInputConnection(grab.GetOutputPort())
-    writer.Write()
-    alone = bytes(view3d.numpy_support.vtk_to_numpy(writer.GetResult()).tobytes())
-
-    def pixels(jpeg: bytes) -> np.ndarray:
-        image = QImage.fromData(jpeg, "JPG").convertToFormat(QImage.Format.Format_RGB888)
-        rows = np.frombuffer(image.constBits(), np.uint8).reshape(
-            image.height(), image.bytesPerLine()
-        )
-        return rows[:, : image.width() * 3].astype(int)
-
-    worst = int(np.abs(pixels(images[focus]) - pixels(alone)).max())
-    assert worst <= 2, f"step {index} differs from itself drawn alone by {worst} levels"
-
-
-def test_a_connection_is_photographed_from_the_side_it_is_made_on() -> None:
-    """The fault this exists to prevent: almost every connection is made on the solder
-    side, and shot from the component side it is behind 1.6 mm of board. The first version
-    of the step images produced fourteen pictures of a board with nothing happening."""
-    from perfboard_studio.guide import all_steps, build_guide, step_focus
-    from perfboard_studio.ui import view3d
-
-    doc = _load_dense()
-    guide = build_guide(doc, footprint_lookup())
-    side_of = {c.id: c.side for c in doc.conductors}
-
-    seen_bottom = False
-    for step in all_steps(guide):
-        focus = step_focus(step)
-        expected = side_of.get(focus) == "bottom"
-        assert view3d.step_is_solder_side(doc, focus) is expected
-        seen_bottom |= expected
-
-    assert seen_bottom, "this fixture is meant to have solder-side connections"
-    # ...and the other way too, or the test would pass on a rule that always said True.
-    assert any(c.side == "top" for c in doc.conductors), "and top-side ones"
-
-
-def test_a_part_is_always_photographed_from_the_component_side() -> None:
-    """Parts go in from the top, whatever else is on the board."""
-    from perfboard_studio.ui import view3d
-
-    doc = _load_dense()
-
-    assert not any(view3d.step_is_solder_side(doc, c.id) for c in doc.components)
+    monkeypatch.setattr(guide_images.BoardScene, "set_problem_focus", focus)
+    images = guide_images.render_guide_images(doc, guide, lookup)
+    assert set(images) == {step_focus(work[0]) for _, work in frames}
+    assert seen == [
+        ("bottom" if bottom else "top", tuple(step_focus(step) for step in work), 16)
+        for bottom, work in frames
+    ]
+    assert all(image.startswith(b"\x89PNG") for image in images.values())
 
 
 def test_solder_and_wire_are_not_the_same_grey() -> None:
@@ -16948,7 +16753,6 @@ def test_a_parts_editor_fits_a_720_px_window_with_its_last_row_showing() -> None
         _close(window)
 
 
-@requires_offscreen_gl  # the render is stubbed, but the scanner reads on_export_guide
 def test_a_boards_edge_fingers_are_a_note_beside_the_files_not_a_gap(tmp_path, monkeypatch) -> None:
     """A stock board's fingers came up as "The guide has gaps" on every export. They are a
     note: said in the written box's details. A real gap still stops the export."""

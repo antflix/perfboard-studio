@@ -14017,25 +14017,9 @@ class MainWindow(QMainWindow):
         )
 
     def _render_step_images(self, document: PerfDocument, guide: Guide) -> dict[str, bytes] | None:
-        """Whole-board pictures for the work groups, counted out loud, with a way to do without them.
+        """Render group pictures with progress and an option to skip them."""
+        from .guide_images import render_guide_images
 
-        None when the user chose to skip the pictures; empty where there is nothing to
-        render into. On a machine with no offscreen GL -- a VM, a remote session, an old
-        driver -- VTK does not raise, it ends the process, so exporting a guide would take
-        the application down with every unsaved edit in it. A guide without pictures is
-        still a complete guide; losing the board is not recoverable.
-
-        IT USED TO BE A WAIT CURSOR AND NOTHING ELSE, on the belief that it took well under
-        a second. atmega328-relay's 83 steps take about forty, and Windows calls a window
-        that has not answered for five "Not Responding". The render stays on this thread --
-        VTK's GL context lives here and nowhere else -- so it reports after each picture and
-        the events are pumped from there, behind the same guard ``_run_planner`` raises: the
-        window disabled, and the file watcher and ``closeEvent`` standing down.
-        """
-        from . import view3d
-
-        if not view3d.offscreen_gl_available():
-            return {}
         started = time.perf_counter()
         skipped = False
         dialog: QProgressDialog | None = None
@@ -14067,7 +14051,7 @@ class MainWindow(QMainWindow):
         self._planner_running = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            images = view3d.render_step_images(document, guide, self.lookup, progress=progress)
+            images = render_guide_images(document, guide, self.lookup, progress=progress)
         finally:
             QApplication.restoreOverrideCursor()
             self._planner_running = False
@@ -14098,7 +14082,7 @@ class MainWindow(QMainWindow):
             self.bus.document, self.lookup, GuideOptions(language=self._guide_language())
         )
 
-        # One 3D render per step, before anything is written -- see _render_step_images.
+        # Render the 2D group pictures before anything is written -- see _render_step_images.
         rendered = self._render_step_images(self.bus.document, guide)
         images = rendered or {}
 

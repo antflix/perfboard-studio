@@ -33,7 +33,7 @@ the bench while you solder the short ones), the solder side is done in blocks as
 group is fitted, long wires come after, and the ICs go in last -- heat and ESD.
 
 WHAT IS NOT HERE, said plainly so nobody has to look for it: the picture on each step
-card (PLAN.md Sec 7.2). It needs the renderer, so ``ui/view3d.render_step_images`` makes
+card (PLAN.md Sec 7.2). It needs the renderer, so ``ui/guide_images.render_guide_images`` makes
 it -- one per step, shot from the face the work is done on -- and the window, the MCP
 server, ``--headless`` and a project save hand it to ``guide_export.guide_to_html``.
 Without GL there is no picture, which is why the text steps here are written to stand on

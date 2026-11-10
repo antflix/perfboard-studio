@@ -2082,23 +2082,13 @@ class BoardSession:
         if directory is None:
             return _ok(written=[], **report)
 
-        # A picture per step if VTK is usable here, and a guide without them if it is
-        # not. Illustrations are worth having and are not worth failing an export over:
-        # every word of the guide is still correct without one, and `report` says how
-        # many were made so an agent is not left guessing whether it got them.
-        # The `except` below covers a VTK that will not import. It cannot cover a VTK
-        # that imports and then finds no GL context behind the offscreen window, because
-        # that does not raise -- it ends the process, and an agent gets a dead server
-        # instead of a guide. `offscreen_gl_available` spends that crash in a child
-        # process where it costs nothing. Both paths land on the same picture-less guide.
         images: dict[str, bytes] = {}
         try:
-            from perfboard_studio.ui.view3d import offscreen_gl_available, render_step_images
+            from perfboard_studio.ui.guide_images import render_guide_images
 
-            if offscreen_gl_available():
-                _ensure_qt_application()
-                images = render_step_images(self.document, guide, self.lookup)
-        except Exception:  # pragma: no cover - only on a VTK-less install
+            _ensure_qt_application()
+            images = render_guide_images(self.document, guide, self.lookup)
+        except Exception:  # pragma: no cover - guide text is still usable without images
             images = {}
         report["step_images"] = len(images)
 

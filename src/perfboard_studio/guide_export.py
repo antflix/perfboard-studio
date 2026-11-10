@@ -446,8 +446,8 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     ``guide.step_focus`` of its first action. **Raw image bytes, not URLs or paths** — this function
     base64s them into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
-    beside it, or a phone's network. Rendering them needs VTK and a real board, which is
-    the host's job (``ui/view3d.render_offscreen``); this module has never known what a
+    beside it, or a phone's network. Rendering them needs a board and a Qt scene, which is
+    the host's job (``ui/guide_images.render_guide_images``); this module has never known what a
     board looks like and still does not — including what format its pictures are in,
     which ``_image_media_type`` reads off the bytes rather than agreeing in advance.
     """

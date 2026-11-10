@@ -38,8 +38,6 @@ import pytest
 from perfboard_studio.mcp.session import BoardSession, SessionError, new_board
 from perfboard_studio.model import ComponentInstance, HoleCoord, WireConductor
 
-from .test_gl import requires_offscreen_gl
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = REPO_ROOT / "tools" / "diffcheck" / "golden" / "ne555.perf"
 
@@ -505,7 +503,6 @@ def test_a_guide_language_nobody_wrote_is_refused_not_guessed(loaded: BoardSessi
     }
 
 
-@requires_offscreen_gl  # writes step images, so it puts the board through VTK
 def test_generating_a_guide_with_a_directory_writes_all_four_files(
     loaded: BoardSession, tmp_path: Path
 ) -> None:
@@ -656,7 +653,6 @@ def test_restoring_a_snapshot_that_does_not_exist_lists_the_ones_that_do(
 # ---------------------------------------------------------------------------
 
 
-@requires_offscreen_gl  # ends in generate_guide(directory), which renders a step image
 def test_an_agent_can_take_a_blank_board_to_a_build_guide(tmp_path: Path) -> None:
     """PLAN.md Sec 11 M6: "a board is designed end to end and a guide produced from
     Claude Code and Antigravity". This is that path, minus the transport.

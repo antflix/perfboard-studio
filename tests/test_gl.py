@@ -7,7 +7,7 @@ crashed and pass on one where it would not.
 
 WHY IT IS A CHILD PROCESS. VTK does not raise when there is no usable OpenGL behind an
 offscreen window -- it ends the process. On GitHub's Windows runners `win.Render()` in
-`render_step_images` killed pytest with an access violation, and the ~360 tests after it
+`render_offscreen` killed pytest with an access violation, and the ~360 tests after it
 were not reported as failed; they were not reported at all, with no summary line. A crash
 cannot be caught where it happens, so it is spent somewhere it costs nothing.
 
@@ -66,15 +66,8 @@ def test_the_probe_flag_answers_and_does_not_start_the_application() -> None:
 # The guard
 # ---------------------------------------------------------------------------
 
-#: Calls that reach `win.Render()`. `render_step_images` and `render_offscreen` are the
-#: only two functions in the codebase that open a render window; the other two are the
-#: paths that reach them, and are named because a test calls those rather than these.
-_RENDERS_ALWAYS = frozenset({"render_step_images", "render_offscreen", "on_export_guide"})
-
-#: `generate_guide()` renders only when it is given somewhere to write the pictures to.
-#: The no-argument form answers "is this board buildable" and touches no GL, which is a
-#: distinction worth keeping: it is the form an agent uses most.
-_RENDERS_WITH_ARGUMENTS = frozenset({"generate_guide"})
+#: The standalone 3D export opens a GL context.
+_RENDERS_ALWAYS = frozenset({"render_offscreen"})
 
 _MARK = "requires_offscreen_gl"
 
@@ -89,7 +82,7 @@ def _called_names(node: ast.AST) -> set[str]:
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
         if name is None:
             continue
-        if name in _RENDERS_ALWAYS or (name in _RENDERS_WITH_ARGUMENTS and child.args):
+        if name in _RENDERS_ALWAYS:
             names.add(name)
     return names
 

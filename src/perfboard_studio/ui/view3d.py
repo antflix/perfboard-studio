@@ -90,13 +90,8 @@ from perfboard_studio.geometry import (
     undrilled_holes,
 )
 from perfboard_studio.guide import (
-    Guide,
-    document_at_step,
     lead_marker,
     signal_colour_index,
-    step_focus,
-    step_groups,
-    step_groups_by_face,
 )
 from perfboard_studio.model import (
     Board,
@@ -7172,24 +7167,6 @@ def _pick_out(actor: vtk.vtkActor) -> vtk.vtkActor:
     return actor
 
 
-def _mount_actor_underneath(actor: vtk.vtkActor, thickness: float) -> None:
-    flip = vtk.vtkTransform()
-    flip.Translate(0, 0, -thickness)
-    flip.Scale(1, 1, -1)
-    actor.SetUserTransform(flip)
-    mapper = actor.GetMapper()
-    # A reflection reverses the mesh winding as well as its position.
-    reverse = vtk.vtkReverseSense()
-    reverse.ReverseNormalsOff()
-    mapper.Update()
-    if mapper.IsA("vtkGlyph3DMapper"):
-        reverse.SetInputData(mapper.GetSource(0))
-        mapper.SetSourceConnection(reverse.GetOutputPort())
-    else:
-        reverse.SetInputData(mapper.GetInput())
-        mapper.SetInputConnection(reverse.GetOutputPort())
-
-
 def populate_renderer(
     ren: vtk.vtkRenderer,
     doc: PerfDocument,
@@ -7198,19 +7175,15 @@ def populate_renderer(
     exploded_mm: float = 0.0,
     highlight: str | frozenset[str] | None = None,
     pin_names: bool = True,
-    guide_mounts: bool = False,
     board_notes: bool = True,
-    subject_actors: list[vtk.vtkActor] | None = None,
     owners: dict[vtk.vtkActor, ActorOwner] | None = None,
 ) -> dict[str, int]:
     """Rebuild the board's actors in an EXISTING renderer, leaving the camera alone.
 
     ``exploded_mm`` lifts every part off the board, so the holes each one drops into are
     visible at once (PLAN.md D7). ``highlight`` is a component or conductor id — the value
-    ``guide.step_focus`` returns — or a set of those ids. Other parts and wires are dimmed. ``subject_actors``, if
-    given, is filled with the highlighted thing's own solids, which is what
-    :func:`frame_step` frames on: where a part IS is what was just drawn, not a second
-    answer worked out from the footprint. ``owners``, if given, is filled with the part or
+    ``guide.step_focus`` returns — or a set of those ids. Other parts and wires are dimmed.
+    ``owners``, if given, is filled with the part or
     conductor each of their solids belongs to, which is how a click in the interactive
     view finds what it landed on (:func:`owner_at`).
 
@@ -7296,17 +7269,13 @@ def populate_renderer(
     for comp in doc.components:
         subject = focus is not None and comp.id in focus
         for actor in build_component(lookup, comp, board, lead_colours.get(comp.id)):
-            if guide_mounts and comp.mirrored:
-                _mount_actor_underneath(actor, board.thickness)
             _lift(actor, exploded_mm)
             if focus is not None:
                 (_pick_out if subject else _dim)(actor)
-            if subject and subject_actors is not None:
-                subject_actors.append(actor)
             if owners is not None:
                 owners[actor] = ("component", comp.id)
             ren.AddActor(actor)
-        if printed is not None and not (guide_mounts and comp.mirrored):
+        if printed is not None:
             # A module's names are on its own board and rise with it; a part's names on
             # this board stay on this board -- and so do a module's outer header row's.
             names = printed.labels.get(comp.id, ())
@@ -7337,8 +7306,6 @@ def populate_renderer(
         ):
             if focus is not None:
                 (_pick_out if subject else _dim)(actor)
-            if subject and subject_actors is not None:
-                subject_actors.append(actor)
             if owners is not None:
                 owners[actor] = ("conductor", cond.id)
             ren.AddActor(actor)
@@ -7639,6 +7606,10 @@ class _Ground:
                 ]
                 return numpy.array(min(ways, key=lambda way: way[0])[1], dtype=float)
         return numpy.array(xy, dtype=float)
+
+
+# VTK bounds, in axis min/max order.
+type Bounds = tuple[float, float, float, float, float, float]
 
 
 def _ground(doc: PerfDocument, obstacles: Collection[Bounds] | None) -> _Ground:
@@ -8003,7 +7974,7 @@ def apply_default_camera(
     It needs the viewport's size to do that, so a renderer with no window yet is only
     ``ResetCamera``-ed, which VTK leaves alone rather than guessing. Every caller that
     shows a picture therefore calls this once the window has its size: ``render_offscreen``
-    and ``render_step_images`` after ``SetSize``, and the panel on its first real resize.
+    after ``SetSize``, and the panel on its first real resize.
 
     ``across`` lays the board's columns up the screen instead of its rows, for a picture of
     a tall board in a wide frame: a 2 x 8 cm strip framed upright fills a fifth of a
@@ -8462,12 +8433,7 @@ def render_offscreen(
     exploded_mm: float = 0.0,
     highlight: str | None = None,
 ) -> dict[str, int]:
-    """Headless render. This is the path the build guide's step images take.
-
-    Pair it with ``guide.document_at_step`` and ``guide.step_focus`` and one call is one
-    step card's illustration: the board as it stands at that point in the build, with the
-    thing that step asks for picked out of it.
-    """
+    """Render a board to a PNG without opening a window."""
     ren, stats = build_renderer(
         doc, lookup, flipped=flipped, exploded_mm=exploded_mm, highlight=highlight
     )
@@ -8487,155 +8453,3 @@ def render_offscreen(
     writer.SetInputConnection(w2i.GetOutputPort())
     writer.Write()
     return stats
-
-
-def step_is_solder_side(doc: PerfDocument, focus: str) -> bool:
-    """Which face a step's work happens on, given what it is about.
-
-    A part goes in from the component side. A connection is made on whichever face its
-    conductor lies on, which for everything except a top jumper is the solder side --
-    so this is the difference between illustrating a step and photographing the back of
-    the board it is behind.
-    """
-    for conductor in doc.conductors:
-        if conductor.id == focus:
-            return conductor.side == "bottom"
-    return False
-
-
-#: JPEG quality for the step images, measured on ``dense.perf`` at 560x370 (33 steps):
-#:
-#:     PNG        135.6 KB/image   guide.html 6378 KB
-#:     JPEG q90    61.8 KB/image
-#:     JPEG q82    47.0 KB/image   guide.html 2070 KB
-#:     JPEG q70    35.6 KB/image
-#:
-#: The guide is one self-contained file meant to open on a phone, so its size is a
-#: feature and not a detail -- and these are photographs of a lit 3D scene, the exact
-#: content PNG is worst at. q82 keeps the pin-1 marks and the highlight colour clean;
-#: below about q70 the JPEG rings around the thin leader lines in the exploded shots.
-#: JPEG rather than WebP because this has to survive PyInstaller: vtkJPEGWriter is
-#: linked into VTK, while Qt's WebP writer is an image-format plugin that has to be
-#: collected into the bundle, and a missing plugin fails at the user's machine.
-STEP_IMAGE_JPEG_QUALITY = 82
-
-
-#: The least board a step picture shows round its subject, in millimetres along each side:
-#: about a dozen holes at 2.54 mm, enough to count from a neighbour -- or from the legend
-#: printed along the edge -- to the hole the card names. A part on its own fills the frame
-#: and says nothing about WHERE it goes.
-STEP_CONTEXT_MM = 30.0
-
-#: VTK's bounds: ``(xmin, xmax, ymin, ymax, zmin, zmax)``.
-type Bounds = tuple[float, float, float, float, float, float]
-
-
-def step_frame_bounds(subject: Bounds, context_mm: float = STEP_CONTEXT_MM) -> Bounds:
-    """The box a step picture is framed on: its subject, widened about its own centre to at
-    least ``context_mm`` along each side of the board. Height is the subject's own, so a
-    tall part is not cut off at the top.
-
-    CENTRED EVEN AT AN EDGE, where part of the picture is then past the board. That strip
-    is where the edge IS, and the edge is the other landmark counting starts from. Sliding
-    the picture back over the board was tried -- each corner's ray cast to the board's
-    plane and the camera moved until all four landed on board -- and it pushed a screw
-    terminal standing on the top edge out of its own picture: a tall part's body projects
-    past the patch of board under it, which is exactly the part such a slide cannot see.
-    """
-    framed = list(subject)
-    for axis in (0, 1):
-        lo, hi = subject[2 * axis], subject[2 * axis + 1]
-        centre, half = (lo + hi) / 2, max(hi - lo, context_mm) / 2
-        framed[2 * axis], framed[2 * axis + 1] = centre - half, centre + half
-    return (framed[0], framed[1], framed[2], framed[3], framed[4], framed[5])
-
-
-def frame_step(
-    ren: vtk.vtkRenderer, whole_board: vtk.vtkCamera, subject: list[vtk.vtkActor]
-) -> None:
-    """Point the camera at one step: from ``whole_board``'s direction, close on ``subject``.
-
-    The DIRECTION is the face's, worked out once on the finished board, so every step on a
-    face is seen from the same place; only the distance and the aim change. Nothing to
-    frame on, or a subject that would need the camera further off than the whole board,
-    gets the whole board -- the camera never backs out past it.
-    """
-    camera = ren.GetActiveCamera()
-    camera.DeepCopy(whole_board)
-    boxes = [actor.GetBounds() for actor in subject]
-    boxes = [box for box in boxes if box[0] <= box[1]]
-    if boxes:
-        union: Bounds = (
-            min(box[0] for box in boxes),
-            max(box[1] for box in boxes),
-            min(box[2] for box in boxes),
-            max(box[3] for box in boxes),
-            min(box[4] for box in boxes),
-            max(box[5] for box in boxes),
-        )
-        ren.ResetCameraScreenSpace(*step_frame_bounds(union), _FRAME_FILL)
-        if camera.GetDistance() >= whole_board.GetDistance():
-            camera.DeepCopy(whole_board)
-    ren.ResetCameraClippingRange()
-
-
-def render_step_images(
-    doc: PerfDocument,
-    guide: Guide,
-    lookup: FootprintLookup,
-    width: int = 560,
-    height: int = 370,
-    progress: Callable[[int, int], bool] | None = None,
-) -> dict[str, bytes]:
-    """Render the whole board after each group, spotlighting the work on each face."""
-    groups = [group for phase in guide.phases for group in step_groups(phase, language=guide.language)]
-    frames: list[tuple[int, bool, tuple[str, ...]]] = []
-    done = 0
-    for group in groups:
-        done += len(group)
-        frames.extend(
-            (done - 1, bottom, tuple(step_focus(step) for step in work))
-            for bottom, work in step_groups_by_face(group)
-        )
-    if not frames:
-        return {}
-
-    ren, _stats = build_renderer(doc, lookup)
-    win = vtk.vtkRenderWindow()
-    win.SetOffScreenRendering(1)
-    win.AddRenderer(ren)
-    win.SetSize(width, height)
-    # The window first: the cameras are fitted to its shape (see apply_default_camera).
-    cameras: dict[bool, vtk.vtkCamera] = {}
-    for flipped in (False, True):
-        apply_default_camera(ren, flipped)
-        camera = vtk.vtkCamera()
-        camera.DeepCopy(ren.GetActiveCamera())
-        cameras[flipped] = camera
-
-    images: dict[str, bytes] = {}
-    for number, (index, flipped, focus) in enumerate(frames, start=1):
-        populate_renderer(
-            ren,
-            document_at_step(doc, guide, index),
-            lookup,
-            highlight=frozenset(focus),
-            guide_mounts=True,
-        )
-        ren.GetActiveCamera().DeepCopy(cameras[flipped])
-        ren.ResetCameraClippingRange()
-        win.Render()
-        grab = vtk.vtkWindowToImageFilter()
-        grab.SetInput(win)
-        grab.Update()
-        writer = vtk.vtkJPEGWriter()
-        writer.SetQuality(STEP_IMAGE_JPEG_QUALITY)
-        writer.WriteToMemoryOn()
-        writer.SetInputConnection(grab.GetOutputPort())
-        writer.Write()
-        jpeg = numpy_support.vtk_to_numpy(writer.GetResult())  # type: ignore[no-untyped-call]
-        images[focus[0]] = bytes(jpeg.tobytes())
-        if progress is not None and not progress(number, len(frames)):
-            return {}
-    return images
-
