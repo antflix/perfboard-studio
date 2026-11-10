@@ -1,15 +1,25 @@
-from dataclasses import replace
 import json
+from dataclasses import replace
 
 import pytest
 
 from perfboard_studio.command import CommandBus, CommandContext
-from perfboard_studio.commands import AddCutPayload, create_document_id_generator, create_standard_registry
+from perfboard_studio.commands import (
+    AddCutPayload,
+    create_document_id_generator,
+    create_standard_registry,
+)
 from perfboard_studio.guide import build_guide
 from perfboard_studio.guide_export import guide_to_html
 from perfboard_studio.model import Board, DocumentMeta, HoleCoord, PerfDocument, TrackCut
 from perfboard_studio.persist import parse_document_or_throw, serialize_document
-from perfboard_studio.stripboard import cut_holes, joined_by_board, segment_holes, segment_of, segments
+from perfboard_studio.stripboard import (
+    cut_holes,
+    joined_by_board,
+    segment_holes,
+    segment_of,
+    segments,
+)
 
 
 def document(axis="horizontal"):

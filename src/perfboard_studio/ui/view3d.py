@@ -8646,6 +8646,7 @@ def render_step_images(
                 else:
                     _dim(actor)
 
+        holes: tuple[HoleCoord, ...]
         if isinstance(step, ConductorStep):
             holes = (step.path[0], step.path[-1])
         else:
@@ -8681,3 +8682,4 @@ def render_step_images(
         if progress is not None and not progress(index + 1, len(steps)):
             return {}
     return images
+

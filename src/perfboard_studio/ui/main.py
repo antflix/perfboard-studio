@@ -10023,7 +10023,7 @@ class MainWindow(QMainWindow):
 
     def _focus_drc_item(self, item: QTreeWidgetItem | None) -> None:
         """Spotlight the exact board objects named by the selected finding."""
-        targets = [set(), set(), set()]
+        targets: list[set[Any]] = [set(), set(), set()]
         rows = [item] if item is not None else []
         while rows:
             row = rows.pop()
@@ -10035,7 +10035,8 @@ class MainWindow(QMainWindow):
                 for target, value in zip(targets, values, strict=True):
                     target.update(value or ())
             else:
-                rows.extend(row.child(index) for index in range(row.childCount()))
+                rows.extend(child for index in range(row.childCount())
+                            if (child := row.child(index)) is not None)
         holes, conductors, components = targets
         self.scene.set_problem_focus(tuple(holes), tuple(conductors), tuple(components))
 
