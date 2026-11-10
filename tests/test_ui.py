@@ -3534,10 +3534,13 @@ def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> No
 
     monkeypatch.setattr(guide_images.BoardScene, "set_problem_focus", focus)
     images = guide_images.render_guide_images(doc, guide, lookup)
-    assert set(images) == {step_focus(work[0]) for _, work in frames}
+    assert set(images) == {step_focus(work[0]) for _, work in frames} | {
+        f"action:{step_focus(step)}" for _, work in frames if len(work) > 1 for step in work
+    }
     assert seen == [
         ("bottom" if bottom else "top", tuple(step_focus(step) for step in work), 16)
-        for bottom, work in frames
+        for bottom, group in frames
+        for work in (group, *((step,) for step in group if len(group) > 1))
     ]
     assert all(image.startswith(b"\x89PNG") for image in images.values())
 

@@ -319,6 +319,12 @@ a  { color: var(--accent); }
 .work-group { margin: 1.3rem 0; }
 .work-group h3 { color: var(--text); text-transform: none; letter-spacing: normal; }
 .work-group figure { margin: .6rem 0; }
+.picture-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .4rem 0; }
+.picture-tools select { max-width: 100%; font: inherit; color: var(--text); background: var(--panel-2); }
+.shot-scroll { overflow: auto; }
+.shot-scroll.zoomed .shot { width: max(100%, 80rem); }
+.cut-map .muted { opacity: .18; }
+tr[data-cut-strip].done { color: var(--dim); }
 .work-group figcaption { color: var(--dim); font-size: .875rem; }
 .work-group .shot, .cut-map { display: block; width: 100%; max-width: none; }
 .phase-num { color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -372,7 +378,10 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
     --text: #000; --dim: #444; --accent: #10305c; --ok: #14562f;
     --warn: #6b4300; --error: #8c1616; --trace: #6b4b00;
   }
-  .progress, input[type=checkbox] { display: none; }
+  .progress, input[type=checkbox], .picture-tools { display: none; }
+  .shot-scroll.zoomed .shot { width: 100%; }
+  .cut-map .muted { opacity: 1; }
+  tr[data-cut-strip][hidden] { display: table-row; }
   body { background: #fff; color: #000; }
   .step, .check { break-inside: avoid; }
   .shot { break-inside: avoid; max-width: 20rem; }
@@ -407,7 +416,7 @@ _SCRIPT = """
   function paint() {
     var n = 0;
     boxes.forEach(function (box) {
-      box.closest('.step, .check').classList.toggle('done', box.checked);
+      box.closest('.step, .check, tr').classList.toggle('done', box.checked);
       if (box.checked) n++;
     });
     if (fill) fill.style.width = (boxes.length ? (n / boxes.length) * 100 : 0) + '%';
@@ -431,6 +440,33 @@ _SCRIPT = """
     paint();
   });
 
+  document.querySelectorAll('[data-spotlight]').forEach(function (select) {
+    var image = select.closest('figure').querySelector('.shot');
+    var original = [image.src, image.alt];
+    select.addEventListener('change', function () {
+      var template = document.getElementById(select.value);
+      var shot = template ? template.content.querySelector('img') : null;
+      image.src = shot ? shot.src : original[0];
+      image.alt = shot ? shot.alt : original[1];
+    });
+  });
+
+  document.querySelectorAll('[data-guide-zoom]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var viewport = button.closest('figure').querySelector('.shot-scroll');
+      button.setAttribute('aria-pressed', viewport.classList.toggle('zoomed'));
+    });
+  });
+
+  var cutFilter = document.querySelector('[data-cut-filter]');
+  if (cutFilter) cutFilter.addEventListener('change', function () {
+    document.querySelectorAll('[data-cut-strip]').forEach(function (item) {
+      var other = cutFilter.value && item.dataset.cutStrip !== cutFilter.value;
+      if (item.tagName === 'TR') item.hidden = !!other;
+      else item.classList.toggle('muted', !!other);
+    });
+  });
+
   paint();
 })();
 """
@@ -443,8 +479,8 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     five years' time, which rules out every dependency that could stop existing.
 
     ``step_images`` contains one whole-board image per group and face, keyed by the
-    ``guide.step_focus`` of its first action. **Raw image bytes, not URLs or paths** — this function
-    base64s them into the document itself. That is the whole point: a caller cannot hand
+    ``guide.step_focus`` of its first action, plus optional ``action:<id>`` images. Pass raw image
+    bytes. This function base64s them into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
     beside it, or a phone's network. Rendering them needs a board and a Qt scene, which is
     the host's job (``ui/guide_images.render_guide_images``); this module has never known what a
@@ -536,9 +572,9 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
             parts.append(f'<section class="work-group"><h3>{escape(title)}</h3>')
             for bottom, work in step_groups_by_face(group):
                 face = say("Copper side" if bottom else "Component side")
-                picture = _html_step_image(work[0], images, f"{title} · {face}")
+                picture = _html_step_image(step_focus(work[0]), images, f"{title} · {face}")
                 if picture:
-                    parts.append(f"<figure>{picture}<figcaption>{escape(face)}</figcaption></figure>")
+                    parts.append(_html_group_picture(picture, work, images, face, step_id, bottom, say))
             for step in group:
                 step_id += 1
                 parts.append(_html_step(step, f"s{step_id}", say, guide.board))
@@ -596,13 +632,31 @@ def _html_cuts(guide: Guide, say: Phrasebook) -> str:
     """
     if not guide.track_cuts:
         return ""
-    rows = "".join(
-        f"<tr><td>{_hole(cut.at, board=guide.board)}"
-        f"{(' – ' + _hole(cut.to, board=guide.board)) if cut.to is not None else ''}</td><td>{escape(cut.strip)}</td>"
-        f"<td>{_hole(cut.separates[0], board=guide.board)} ↔ {_hole(cut.separates[1], board=guide.board)}</td></tr>"
-        if cut.separates is not None
-        else f"<tr><td>{_hole(cut.at, board=guide.board)}</td><td>{escape(cut.strip)}</td><td>—</td></tr>"
-        for cut in guide.track_cuts
+    rows = []
+    for i, cut in enumerate(guide.track_cuts, 1):
+        location = _hole(cut.at, board=guide.board)
+        if cut.to is not None:
+            location += " – " + _hole(cut.to, board=guide.board)
+        probes = (
+            " ↔ ".join(_hole(at, board=guide.board) for at in cut.separates)
+            if cut.separates is not None else "—"
+        )
+        address = format_hole(cut.at, guide.board)
+        if cut.to is not None:
+            address += " – " + format_hole(cut.to, guide.board)
+        label = escape(say("Mark cut {cut} done", cut=address))
+        rows.append(
+            f'<tr data-cut-strip="{escape(cut.strip)}">'
+            f'<td><input type="checkbox" id="track-cut-{i}" aria-label="{label}"></td>'
+            f'<td>{location}</td><td>{escape(cut.strip)}</td><td>{probes}</td></tr>'
+        )
+    options = "".join(
+        f'<option value="{escape(strip)}">{escape(strip)}</option>'
+        for strip in dict.fromkeys(cut.strip for cut in guide.track_cuts)
+    )
+    cut_filter = (
+        f'<label class="picture-tools">{escape(say("Spotlight cuts by strip"))} '
+        f'<select data-cut-filter><option value="">{escape(say("All strips"))}</option>{options}</select></label>'
     )
     if any(cut.to is not None for cut in guide.track_cuts):
         instructions = say(
@@ -622,9 +676,9 @@ def _html_cuts(guide: Guide, say: Phrasebook) -> str:
     return (
         "<h3>" + say("Cut these tracks first") + "</h3><p>"
         + instructions
-        + "</p>" + _cut_map(guide, say) + '<div class="wrap"><table>'
-        f"<tr><th>{say('Hole')}</th><th>{say('Strip')}</th><th>{say('Separates')}</th></tr>"
-        f"{rows}</table></div>"
+        + "</p>" + cut_filter + _cut_map(guide, say) + '<div class="wrap"><table>'
+        f"<tr><th>{say('Done')}</th><th>{say('Hole')}</th><th>{say('Strip')}</th><th>{say('Separates')}</th></tr>"
+        f"{''.join(rows)}</table></div>"
     )
 
 
@@ -646,7 +700,7 @@ def _cut_map(guide: Guide, say: Phrasebook) -> str:
         x = cols - 1 - (cut.at.col + end.col) / 2
         y = (cut.at.row + end.row) / 2
         marks.append(
-            f'<path d="M{x-.23} {y-.23}l.46 .46m-.46 0l.46 -.46">'
+            f'<path data-cut-strip="{escape(cut.strip)}" d="M{x-.23} {y-.23}l.46 .46m-.46 0l.46 -.46">'
             f'<title>{escape(format_hole(cut.at, guide.board))}'
             + (f' – {escape(format_hole(end, guide.board))}' if cut.to else "")
             + '</title></path>'
@@ -768,9 +822,39 @@ def _image_media_type(data: bytes) -> str:
     return "application/octet-stream"
 
 
-def _html_step_image(step: GuideStep, images: Mapping[str, bytes], title: str) -> str:
-    """Inline the whole-board picture for the first action on this face."""
-    picture = images.get(step_focus(step))
+def _html_group_picture(
+    picture: str, work: tuple[GuideStep, ...], images: Mapping[str, bytes],
+    face: str, group_index: int, bottom: bool, say: Phrasebook,
+) -> str:
+    options: list[str] = []
+    templates: list[str] = []
+    for i, step in enumerate(work):
+        individual = _html_step_image(f"action:{step_focus(step)}", images, f"{step.title} · {face}")
+        if individual:
+            target = f"spot-{group_index}-{int(bottom)}-{i}"
+            options.append(f'<option value="{target}">{escape(step.title)}</option>')
+            templates.append(f'<template id="{target}">{individual}</template>')
+    select = (
+        f'<label>{escape(say("Spotlight"))} <select data-spotlight>'
+        f'<option value="">{escape(say("Whole group"))}</option>{"".join(options)}</select></label>'
+        if options else ""
+    )
+    summary = say(
+        "{count} component(s)" if isinstance(work[0], PartStep) else "{count} connection(s)",
+        count=len(work),
+    )
+    legend = say("Gold labels mark the current work. Gray labels mark installed wire ends.")
+    return (
+        f'<figure><figcaption>{escape(face)} · {escape(summary)}<br>{escape(legend)}</figcaption>'
+        f'<div class="picture-tools">{select}'
+        f'<button type="button" data-guide-zoom aria-pressed="false">{escape(say("Zoom board"))}</button></div>'
+        f'<div class="shot-scroll">{picture}</div>{"".join(templates)}</figure>'
+    )
+
+
+def _html_step_image(key: str, images: Mapping[str, bytes], title: str) -> str:
+    """Inline a whole-board picture for a group or an individual action."""
+    picture = images.get(key)
     if not picture:
         return ""
     encoded = base64.b64encode(picture).decode("ascii")

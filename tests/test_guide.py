@@ -1291,6 +1291,13 @@ def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
     html = guide_to_html(guide, some)
 
     assert html.count("<img") == 3
+
+    work = next(work for work in faces if len(work) > 1)
+    key = step_focus(work[0])
+    annotated = guide_to_html(guide, {key: b"\x89PNG group", f"action:{key}": b"\x89PNG action"})
+    assert "<select data-spotlight>" in annotated
+    assert '<template id="spot-' in annotated
+    assert annotated.count("<img") == 2
     assert html.count('class="work-group"') == len(groups)
     assert html.count('class="step"') == guide.total_steps
 
