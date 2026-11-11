@@ -930,34 +930,35 @@ TURKISH: dict[str, str] = {
     ),
     "{length:g} holes": "{length:g} delik",
     "{length} · {colour} · AWG {awg}": "{length} · {colour} · AWG {awg}",
-    "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} hole spacings in total": (
+    "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} holes in total": (
         "Çıplak kalaylı bakır tel, AWG {gauges} — toplam yaklaşık {holes:.0f} delik aralığı"
     ),
-    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in total": (
+    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in total": (
         "{colours} renklerinde AWG {gauges} bağlantı teli — toplam yaklaşık {holes:.0f} delik "
         "aralığı"
     ),
-    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings, plus the wires"
+    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes, plus the wires"
     " to the parts off the board, cut to fit": (
         "{colours} renklerinde AWG {gauges} bağlantı teli — yaklaşık {holes:.0f} delik aralığı ve"
         " kart dışındaki parçalar için ölçüye göre kesilen teller"
     ),
-    "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in "
+    "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in "
     "total. Not stranded: a stranded end frays in the clip instead of going in.": (
         "{colours} renklerinde AWG {gauges} tek damarlı bağlantı teli — toplam yaklaşık "
         "{holes:.0f} delik aralığı. Çok telli uçlar klipse girmek yerine dağılır."
     ),
     "Print these pages at 100 % — actual size, not fit to page — and hold the bar below "
-    "against a ruler: if it is not {ruler} mm, the printer has scaled them. Each number is "
-    "the distance between consecutive marks, measured in hole spacings. One hole means one "
-    "center-to-center spacing between adjacent board holes. The solid blue marks show where "
-    "the wire enters the board and the insulation ends. The dashed blue marks show bends "
-    "along the board. Copper-colored ends are bare wire.": (
-        "Bu sayfaları %100 gerçek boyutta yazdırın. Aşağıdaki çubuğu cetvelle karşılaştırın; "
-        "{ruler} mm değilse yazıcı ölçeği değiştirmiştir. Sayılar ardışık işaretler arasındaki "
-        "delik aralıklarını gösterir. Bir delik, komşu delik merkezleri arasındaki mesafedir. Düz"
-        " mavi işarette tel karta girer ve izolasyon biter. Kesikli mavi işaretler kart "
-        "üzerindeki dönüşleri gösterir. Bakır renkli uçlar çıplaktır."
+    "against a ruler: if it is not {ruler} mm, the printer has scaled them. Count holes "
+    "inclusively, including both ends of each segment. Adjacent holes measure 2 holes; L "
+    "through O measures 4 holes. Shared bends belong to both neighboring segments, so use the"
+    " stated total cut length instead of adding the segment labels. The solid blue marks show"
+    " where the wire enters the board and the insulation ends. The dashed blue marks show "
+    "bends along the board. Copper-colored ends are bare wire.": (
+        "Bu sayfaları %100 gerçek boyutta yazdırın. Cetvel {ruler} mm olmalıdır. Her parçada iki "
+        "uçtaki delikleri de sayın. Komşu delikler 2 delik, L ile O arası 4 delik sayılır. Ortak "
+        "büküm delikleri iki parçada da sayıldığından etiketleri toplamak yerine toplam kesim "
+        "boyunu kullanın. Düz mavi işarette tel karta girer ve izolasyon biter. Kesikli mavi "
+        "işaretler kart üzerindeki dönüşlerdir. Bakır renkli uçlar çıplaktır."
     ),
     "Zoom board": "Kartı büyüt",
     "{count} component(s)": "{count} bileşen",

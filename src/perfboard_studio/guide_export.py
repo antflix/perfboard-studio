@@ -248,7 +248,7 @@ def cut_list_to_csv(guide: Guide) -> str:
 
 def _hole_length(length_mm: float, board: Board | None, say: Phrasebook) -> str:
     pitch = board.pitch if board is not None else 2.54
-    return say("{length:g} holes", length=round(length_mm / pitch, 2))
+    return say("{length:g} holes", length=round(length_mm / pitch + 1, 2))
 
 
 def _html_lead_row(lead: LeadCut, say: Phrasebook, *, board: Board | None) -> str:
@@ -1196,7 +1196,7 @@ _MARK_INK: dict[WireMarkKind, str] = {"strip": "#333333", "through": _BEND_INK, 
 
 
 def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, scale: float, *, board: Board | None) -> str:
-    """Label distances between successive marks in board hole spacings."""
+    """Count both endpoint holes for each segment between marks."""
     ink, width = _wire_ink(cut)
     m, length, y = TEMPLATE_MARGIN_MM, template.length_mm, 6.0
     pitch = board.pitch if board is not None else 2.54
@@ -1220,7 +1220,7 @@ def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, sca
     last_label = -math.inf
     for left, right in itertools.pairwise(positions):
         x = m + (left + right) / 2
-        text = f"{round((right - left) / pitch, 2):g}"
+        text = f"{round((right - left) / pitch + 1, 2):g}"
         row = 0 if x - last_label >= len(text) * _CHAR_MM * .75 else 1
         if row == 0:
             last_label = x
@@ -1294,8 +1294,10 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
         + say(
             "Print these pages at 100 % — actual size, not fit to page — and hold the bar "
             "below against a ruler: if it is not {ruler} mm, the printer has scaled them. "
-            "Each number is the distance between consecutive marks, measured in hole spacings. "
-            "One hole means one center-to-center spacing between adjacent board holes. "
+            "Count holes inclusively, including both ends of each segment. "
+            "Adjacent holes measure 2 holes; L through O measures 4 holes. "
+            "Shared bends belong to both neighboring segments, so use the stated total "
+            "cut length instead of adding the segment labels. "
             "The solid blue marks show where the wire enters the board and the insulation ends. "
             "The dashed blue marks show bends along the board. Copper-colored ends are bare wire.",
             ruler=RULER_MM,

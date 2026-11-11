@@ -2760,32 +2760,32 @@ def _tools(
             # SOLID core, and it has to be said: a stranded wire frays in a clip instead of
             # going into it, and is the reel most people reach for first.
             tools.append(say(
-                "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in "
+                "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in "
                 "total. Not stranded: a stranded end frays in the clip instead of going in.",
                 gauges=gauges,
                 colours=colours,
-                holes=hole_spacings,
+                holes=hole_spacings + 1,
             ))
         elif any(lead.cut_mm is None for lead in leads):
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings, plus the "
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes, plus the "
                 "wires to the parts off the board, cut to fit",
                 gauges=gauges,
                 colours=colours,
-                holes=hole_spacings,
+                holes=hole_spacings + 1,
             ))
         else:
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in total",
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in total",
                 gauges=gauges,
                 colours=colours,
-                holes=hole_spacings,
+                holes=hole_spacings + 1,
             ))
     if bare:
         tools.append(say(
-            "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} hole spacings in total",
+            "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} holes in total",
             gauges=_gauges(bare),
-            holes=sum(cut.cut_mm for cut in bare) / doc.board.pitch,
+            holes=sum(cut.cut_mm for cut in bare) / doc.board.pitch + 1,
         ))
     if hookup or leads:
         tools.append(say("Wire strippers"))

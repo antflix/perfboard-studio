@@ -637,7 +637,7 @@ def test_insulated_tail_is_long_enough_for_the_board() -> None:
     assert cut.cut_mm == pytest.approx(cut.path_mm + 2 * cut.strip_mm)
 
 
-def test_u_template_has_two_bare_holes_then_one_three_one_insulated_holes() -> None:
+def test_u_template_counts_holes_inclusively_without_changing_the_cut() -> None:
     import itertools
     import math
     import re
@@ -660,10 +660,10 @@ def test_u_template_has_two_bare_holes_then_one_three_one_insulated_holes() -> N
     assert [mark.at_mm / BOARD.pitch for mark in template.marks] == pytest.approx([2, 3, 6, 7])
     svg = _straight_svg(template, step, step.cut, 1, board=BOARD)
     labels = re.findall(r'<text[^>]*>([^<]*)</text>', svg)
-    assert labels == ["L16", "O16", "2", "1", "3", "1", "2"]
+    assert labels == ["L16", "O16", "3", "2", "4", "2", "3"]
     html = guide_to_html(guide)
-    assert "Cut 9 holes" in html and "strip 2 holes at each end" in html
-    assert "5 holes" in html
+    assert "Cut 10 holes" in html and "strip 3 holes at each end" in html
+    assert "6 holes" in html
 
 
 def test_bare_wire_is_not_charged_a_stripping_allowance() -> None:
