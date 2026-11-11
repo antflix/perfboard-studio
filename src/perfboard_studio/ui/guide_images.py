@@ -13,10 +13,10 @@ from ..guide import (
     Guide,
     GuideStep,
     PartStep,
+    all_steps,
+    assembly_phases,
     document_at_step,
     step_focus,
-    step_groups,
-    step_groups_by_face,
 )
 from ..model import Board, BoardSide, HoleCoord, PerfDocument
 from ..phrasebook import Phrasebook, phrasebook
@@ -111,19 +111,11 @@ def render_guide_images(
     progress: Callable[[int, int], bool] | None = None,
 ) -> dict[str, bytes]:
     """Draw cumulative and isolated action views, and one finished view per face."""
+    guide = replace(guide, phases=assembly_phases(guide))
     frames: list[tuple[int, bool, tuple[GuideStep, ...], str]] = []
-    done = 0
-    for phase in guide.phases:
-        for group in step_groups(phase, language=guide.language):
-            indices = {step_focus(step): done + i for i, step in enumerate(group)}
-            done += len(group)
-            for bottom, work in step_groups_by_face(group):
-                frames.append((done - 1, bottom, work, step_focus(work[0])))
-                if len(work) > 1:
-                    frames.extend(
-                        (indices[step_focus(step)], bottom, (step,), f"action:{step_focus(step)}")
-                        for step in work
-                    )
+    for index, step in enumerate(all_steps(guide)):
+        bottom = step.mirrored if isinstance(step, PartStep) else step.side == "bottom"
+        frames.append((index, bottom, (step,), f"action:{step_focus(step)}"))
 
     frames += [(index, bottom, work, f"only:{key}") for index, bottom, work, key in frames]
     frames += [(-1, bottom, (), f"finished:{int(bottom)}") for bottom in dict.fromkeys(

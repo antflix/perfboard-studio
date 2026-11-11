@@ -56,13 +56,13 @@ from perfboard_studio.guide import (
     PartStep,
     all_checkpoints,
     all_steps,
+    assembly_phases,
     build_guide,
     describe,
     document_at_step,
     net_colours,
     step_focus,
     step_groups,
-    step_groups_by_face,
     wire_template,
 )
 from perfboard_studio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
@@ -1314,40 +1314,65 @@ def test_a_step_with_no_picture_is_still_a_complete_step() -> None:
     assert plain.count('class="step"') == guide.total_steps
 
 
-def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
-    doc = routed_ne555()
-    guide = build_guide(doc, REGISTRY)
-    groups = [group for phase in guide.phases for group in step_groups(phase)]
-    assert tuple(step for group in groups for step in group) == all_steps(guide)
-    assert any(len(group) > 1 for group in groups)
-    faces = [work for group in groups for _, work in step_groups_by_face(group)]
-    some = {step_focus(work[0]): b"\x89PNG fake" for work in faces[:3]}
-
-    html = guide_to_html(guide, some)
-
-    assert html.count("<img") == 3
-
-    work = next(work for work in faces if len(work) > 1)
-    key = step_focus(work[0])
-    annotated = guide_to_html(guide, {key: b"\x89PNG group", f"action:{key}": b"\x89PNG action"})
-    assert "<select data-spotlight>" in annotated
-    assert '<template id="spot-' in annotated
-    assert annotated.count("<img") == 2
-
-    bottom = next(bottom for bottom, candidate in (
-        face for group in groups for face in step_groups_by_face(group)
-    ) if candidate == work)
-    with_views = guide_to_html(guide, {
-        key: b"\x89PNG group", f"action:{key}": b"\x89PNG action",
-        f"only:{key}": b"\x89PNG only group", f"only:action:{key}": b"\x89PNG only action",
-        f"finished:{int(bottom)}": b"\x89PNG finished",
+def test_one_viewer_reuses_individual_images_and_keeps_every_action() -> None:
+    guide = build_guide(routed_ne555(), REGISTRY)
+    steps = all_steps(guide)
+    first = steps[0]
+    key = step_focus(first)
+    html = guide_to_html(guide, {
+        f"action:{key}": b"\x89PNG action",
+        f"only:action:{key}": b"\x89PNG only action",
+        "finished:0": b"\x89PNG finished",
     })
-    assert 'data-guide-view="only"' in with_views
-    assert f'data-guide-view="finished" data-view-target="finished-{int(bottom)}"' in with_views
-    assert with_views.count(f'<template id="finished-{int(bottom)}">') == 1
-    assert with_views.count('<img') == 5
-    assert html.count('class="work-group"') == len(groups)
+    assert html.count('class="assembly-viewer"') == 1
+    assert html.count('data-queue-row data-group=') == guide.total_steps
+    assert html.count('data-select-step aria-pressed') == guide.total_steps
+    assert 'data-guide-view="only"' in html and 'data-guide-view="finished"' in html
+    assert '<template id="finished-0">' in html
+    assert '<template id="spot-s1-only">' in html
+    assert html.count('<img') == 4  # viewer, selected, isolated, finished
     assert html.count('class="step"') == guide.total_steps
+    assert '<details class="checks">' in html
+    assert '<details class="checks" open' not in html
+    assert '<div class="tpl-preview">' not in html
+    assert 'data-active-template' in html
+
+
+def test_crossing_wire_order_takes_priority_over_net_grouping_and_phase() -> None:
+    # A signal under a ground wire must be laid first, even though ground sorts first.
+    doc = make_doc(conductors=(
+        WireConductor(id="lower", path=(hole(2, 4), hole(9, 4)), kind="insulated-wire",
+                      net_id="signal", side="top"),
+        WireConductor(id="upper", path=(hole(5, 2), hole(5, 8)), kind="insulated-wire",
+                      net_id="ground", side="top"),
+        WireConductor(id="same-net", path=(hole(10, 4), hole(14, 4)), kind="insulated-wire",
+                      net_id="signal", side="top"),
+        WireConductor(id="back", path=(hole(5, 2), hole(5, 8)), kind="insulated-wire",
+                      net_id="ground", side="bottom"),
+    ), nets=(net("signal", "SIGNAL", "signal", ()), net("ground", "GND", "ground", ())))
+    guide = build_guide(doc, REGISTRY)
+    wire_steps = {step.conductor_id: step for step in all_steps(guide) if isinstance(step, ConductorStep)}
+    assert wire_steps["upper"].install_after == ("lower",)
+    assert wire_steps["back"].install_after == ()
+    # The upper wire goes under a component in phase 1; bring its lower wire forward too.
+    phases = tuple(dataclasses.replace(phase, steps=tuple(
+        step for step in phase.steps if step != wire_steps["upper"]
+    ) + ((wire_steps["upper"],) if phase.number == 1 else ())) for phase in guide.phases)
+    ordered = assembly_phases(dataclasses.replace(guide, phases=phases))
+    early = next(phase for phase in ordered if phase.number == 1)
+    assert [step.conductor_id for step in early.steps if isinstance(step, ConductorStep)] == ["lower", "upper"]
+    assert len([step for phase in ordered for step in phase.steps]) == len(all_steps(guide))
+    assert assembly_phases(dataclasses.replace(guide, phases=ordered)) == ordered
+
+
+def test_net_wires_are_adjacent_when_crossings_allow_it() -> None:
+    doc = make_doc(conductors=tuple(
+        WireConductor(id=key, path=(hole(2, row), hole(7, row)), kind="insulated-wire", net_id=n)
+        for key, row, n in (("a", 1, "n1"), ("b", 2, "n2"), ("c", 3, "n1"))
+    ), nets=(net("n1", "ONE", "signal", ()), net("n2", "TWO", "signal", ())))
+    guide = build_guide(doc, REGISTRY)
+    groups = [group for phase in assembly_phases(guide) for group in step_groups(phase)]
+    assert any([step.conductor_id for step in group if isinstance(step, ConductorStep)] == ["a", "c"] for group in groups)
 
 
 @pytest.mark.parametrize(

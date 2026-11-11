@@ -228,7 +228,7 @@ def _load(path: Path) -> model.PerfDocument:
 #: sentences. Identifiers stay identifiers in every language; a net called GND is GND.
 _NOT_PROSE = frozenset(
     {"kind", "archetype", "conductor_kind", "net_class", "code", "colour", "material",
-     "component_id", "conductor_id", "net_name", "ref", "value", "document_name",
+     "component_id", "conductor_id", "install_after", "net_name", "ref", "value", "document_name",
      "footprint_name",
      # The face a conductor lies on, "top" or "bottom" -- the model's BoardSide, which is
      # what picks the way round its wire template is drawn.

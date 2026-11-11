@@ -109,6 +109,12 @@ against the part's datasheet.
 the 1:1 print of the board, the schematic as SVG, PDF and PNG, the guide, the bill of
 materials and the cut list.
 
+The HTML guide uses one shared board viewer above a selectable assembly list. Wires are
+grouped by net where possible, with lower crossing wires installed first. Select an action
+to spotlight it, use **Only this step** to hide everything else, and mark it **Completed**
+to move it below the remaining work. Phase checks and printable wire templates start
+collapsed; open the phase checks before moving on. Progress is saved in the browser.
+
 ## Where to go next
 
 - The other examples, finished boards you can open and change, are described in

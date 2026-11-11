@@ -916,10 +916,12 @@ TURKISH: dict[str, str] = {
         "{steps} adım, {checks} kontrol · Perfboard Studio {version}"
     ),
     "Phase {number}": "Aşama {number}",
-    "Spotlight": "Vurgula",
-    "Whole group": "Tüm grup",
-    "Gold labels mark the current work. Gray labels mark installed wire ends.":
-        "Altın renkli etiketler geçerli işi, gri etiketler takılı kablo uçlarını gösterir.",
+    'Build the board': 'Kartı monte et',
+    'Completed': 'Tamamlandı',
+    'Select': 'Seç',
+    'Wire shape and length': 'Tel şekli ve uzunluğu',
+    'All assembly actions completed.': 'Tüm montaj işlemleri tamamlandı.',
+    'Follow the list from top to bottom. Lower crossing wires come first. Select a row to spotlight it; completed work moves to the bottom.': 'Listeyi yukarıdan aşağıya takip edin. Kesişen tellerden altta olan önce takılır. Vurgulamak için bir satır seçin; tamamlanan işler listenin altına taşınır.',
     "Only this step": "Yalnızca bu adım",
     "Finished board": "Tamamlanmış kart",
     ", strip {length} at each end": ", her iki uçtan {length} soyun",
@@ -961,8 +963,6 @@ TURKISH: dict[str, str] = {
         "işaretler kart üzerindeki dönüşlerdir. Bakır renkli uçlar çıplaktır."
     ),
     "Zoom board": "Kartı büyüt",
-    "{count} component(s)": "{count} bileşen",
-    "{count} connection(s)": "{count} bağlantı",
     "Pin 1 · {hole}": "Pin 1 · {hole}",
     "Bend {number} · {hole}": "Büküm {number} · {hole}",
     "Copper side · A1 at upper right": "Bakır yüz · A1 sağ üstte",

@@ -83,6 +83,7 @@ from .geometry import (
     legend_label,
     legend_run_spans,
     path_length_mm,
+    paths_cross,
     row_label,
     transform_offset,
 )
@@ -112,6 +113,7 @@ from .model import (
     declared_pin_name,
     pin_name_of,
 )
+from .occupancy import stacking_layers
 from .phrasebook import ENGLISH, GuideLanguage, Phrasebook, phrasebook
 from .stripboard import is_stripboard, strip_axis
 
@@ -610,6 +612,9 @@ class ConductorStep:
     cut: WireCut | None
     risks: tuple[RiskNote, ...]
     notes: tuple[str, ...]
+    install_after: tuple[ConductorId, ...] = dataclasses.field(
+        default=(), metadata={JSON_OMITTED_AT_DEFAULT: True}
+    )
 
     @property
     def title(self) -> str:
@@ -752,6 +757,16 @@ def build_guide(
     conductor_steps, cut_list, spine_list = _conductor_steps(
         doc, nets_by_id, color_by_net, violations, options, say
     )
+    layers = stacking_layers(doc)
+    conductor_steps = [
+        (dataclasses.replace(step, install_after=tuple(
+            other.conductor_id for other, _ in conductor_steps
+            if other.side == step.side
+            and layers[other.conductor_id] < layers[step.conductor_id]
+            and paths_cross(other.path, step.path) is not None
+        )), phase)
+        for step, phase in conductor_steps
+    ]
     lead_list = _lead_cuts(doc, lookup, color_by_net, options, say)
     # A part off the board is wired after the copper, so a net reaching it is not finished
     # until its wires are in -- and a continuity check asked for before then fails for a
@@ -3035,6 +3050,48 @@ def all_checkpoints(guide: Guide) -> tuple[Checkpoint, ...]:
 
 def all_steps(guide: Guide) -> tuple[GuideStep, ...]:
     return tuple(step for phase in guide.phases for step in phase.steps)
+
+
+def assembly_phases(guide: Guide) -> tuple[GuidePhase, ...]:
+    """Lay lower crossing wires first; keep nets together when dependencies permit."""
+    wires = {
+        step.conductor_id: step for step in all_steps(guide) if isinstance(step, ConductorStep)
+    }
+    phase_of = {
+        step.conductor_id: phase.number for phase in guide.phases for step in phase.steps
+        if isinstance(step, ConductorStep)
+    }
+    # A lower wire must be available before an upper wire is trapped under a part.
+    for _ in wires:
+        changed = False
+        for wire in wires.values():
+            for lower in wire.install_after:
+                if lower in phase_of and phase_of[lower] > phase_of[wire.conductor_id]:
+                    phase_of[lower] = phase_of[wire.conductor_id]
+                    changed = True
+        if not changed:
+            break
+    phases = []
+    laid: set[str] = set()
+    for phase in guide.phases:
+        pending = [wire for key, wire in wires.items() if phase_of[key] == phase.number]
+        ordered: list[GuideStep] = []
+        previous = None
+        while pending:
+            ready = [wire for wire in pending if all(
+                lower not in wires or lower in laid for lower in wire.install_after
+            )]
+            if not ready:
+                raise ValueError("Cyclic wire installation dependencies")
+            wire = next((wire for wire in ready if wire.net_name == previous), ready[0])
+            ordered.append(wire)
+            laid.add(wire.conductor_id)
+            pending.remove(wire)
+            previous = wire.net_name
+        parts = [step for step in phase.steps if isinstance(step, PartStep)]
+        steps = [*ordered, *parts] if phase.number == 1 else [*parts, *ordered]
+        phases.append(dataclasses.replace(phase, steps=tuple(steps)))
+    return tuple(phases)
 
 
 def step_groups(phase: GuidePhase, *, language: GuideLanguage = "en") -> tuple[tuple[GuideStep, ...], ...]:

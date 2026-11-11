@@ -3513,16 +3513,16 @@ def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
 
 
 def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> None:
-    from perfboard_studio.guide import build_guide, step_focus, step_groups, step_groups_by_face
+    from perfboard_studio.guide import all_steps, assembly_phases, build_guide, step_focus
     from perfboard_studio.ui import guide_images
 
     doc = _load_dense()
     lookup = footprint_lookup()
     guide = build_guide(doc, lookup)
+    guide = dataclasses.replace(guide, phases=assembly_phases(guide))
     frames = [
-        (bottom, work)
-        for phase in guide.phases for group in step_groups(phase)
-        for bottom, work in step_groups_by_face(group)
+        (step.mirrored if isinstance(step, guide_images.PartStep) else step.side == "bottom", (step,))
+        for step in all_steps(guide)
     ]
     seen = []
     drawn = []
@@ -3541,15 +3541,12 @@ def test_guide_pictures_use_labeled_board_scenes_on_each_face(monkeypatch) -> No
     monkeypatch.setattr(guide_images.BoardScene, "set_problem_focus", focus)
     monkeypatch.setattr(guide_images, "_annotate", record)
     images = guide_images.render_guide_images(doc, guide, lookup)
-    cumulative = {step_focus(work[0]) for _, work in frames} | {
-        f"action:{step_focus(step)}" for _, work in frames if len(work) > 1 for step in work
-    }
+    cumulative = {f"action:{step_focus(work[0])}" for _, work in frames}
     finished = {f"finished:{int(bottom)}" for bottom, _ in frames}
     assert set(images) == cumulative | {f"only:{key}" for key in cumulative} | finished
     expected = [
         ("bottom" if bottom else "top", tuple(step_focus(step) for step in work), 16)
-        for bottom, group in frames
-        for work in (group, *((step,) for step in group if len(group) > 1))
+        for bottom, work in frames
     ]
     assert seen == expected * 2
     for (_, focused, _), (parts, wires) in zip(

@@ -1397,7 +1397,10 @@
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         },
         {
           "kind": "conductor",
@@ -1446,7 +1449,11 @@
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-12",
+            "cond-8"
+          ]
         },
         {
           "kind": "conductor",
@@ -1495,7 +1502,10 @@
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         },
         {
           "kind": "conductor",
@@ -1544,7 +1554,12 @@
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-4",
+            "cond-12",
+            "cond-3"
+          ]
         },
         {
           "kind": "conductor",
@@ -1593,7 +1608,10 @@
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         }
       ],
       "checkpoints": [

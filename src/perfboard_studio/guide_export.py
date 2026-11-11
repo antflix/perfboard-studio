@@ -38,7 +38,7 @@ import itertools
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from html import escape
 from typing import Any
 
@@ -52,19 +52,18 @@ from .guide import (
     Checkpoint,
     ConductorStep,
     Guide,
-    GuideStep,
     LeadCut,
     PartStep,
     WireCut,
     WireMarkKind,
     WireTemplate,
     all_steps,
+    assembly_phases,
     conductor_word,
     is_guide_gap,
     lead_end,
     step_focus,
     step_groups,
-    step_groups_by_face,
     wire_template,
 )
 from .harness import HarnessEnd
@@ -396,6 +395,37 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
   .tpl-preview { display: none; }
   .templates { break-before: page; }
 }
+
+summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
+summary h2 { display: inline; }
+.checks { margin: .5rem 0; }
+.assembly-viewer { margin: .5rem 0; }
+.assembly-viewer .shot { max-width: none; width: 100%; max-height: 48vh; object-fit: contain; }
+.assembly-viewer .shot-scroll.zoomed .shot { max-height: none; width: max(100%, 80rem); }
+.assembly-viewer figcaption { color: var(--accent); font-weight: 600; }
+.assembly .step { flex-wrap: wrap; }
+.assembly .tag { display: none; }
+.wire-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; }
+.wire-controls label { display: flex; gap: .3rem; align-items: center; cursor: pointer; }
+.wire-controls input { margin: 0; }
+[data-select-step][aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+[data-active-row] .step { border-color: var(--accent); }
+.queue-context { display: none; font-size: .75rem; }
+.assembly .step .note { display: none; }
+[data-active-row] .step .note, [data-active-row] .queue-context { display: block; }
+.active-template { margin: .5rem 0 1rem; }
+[hidden] { display: none !important; }
+@media (max-width: 40rem) {
+  .assembly .body { flex-basis: 100%; }
+  .assembly-viewer .shot { max-height: 42vh; }
+}
+@media print {
+  .wire-controls, .active-template { display: none; }
+  .assembly-viewer .shot { max-height: none; }
+  .completed-list .done { opacity: 1; }
+  .assembly .step .note { display: block; }
+}
+
 /* Wire templates. Drawn on white whatever the theme, as the paper they stand for. */
 .tpl-preview { margin: .5rem 0 .1rem; }
 .tpl-pair { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; align-items: flex-start; }
@@ -428,12 +458,14 @@ _SCRIPT = """
     });
     if (fill) fill.style.width = (boxes.length ? (n / boxes.length) * 100 : 0) + '%';
     if (count) count.textContent = n + '__OF__' + boxes.length + '__DONE__';
+    refreshQueue();
   }
 
   boxes.forEach(function (box) {
     box.checked = !!done[box.id];
     box.addEventListener('change', function () {
       done[box.id] = box.checked;
+      if (box.checked && box.closest('[data-queue-row]') === selected) selected = null;
       try { localStorage.setItem(key, JSON.stringify(done)); } catch (e) {}
       paint();
     });
@@ -442,41 +474,94 @@ _SCRIPT = """
   var reset = document.querySelector('.reset');
   if (reset) reset.addEventListener('click', function () {
     done = {};
+    selected = null;
     try { localStorage.removeItem(key); } catch (e) {}
     boxes.forEach(function (box) { box.checked = false; });
     paint();
   });
 
-  document.querySelectorAll('.work-group figure').forEach(function (figure) {
-    var image = figure.querySelector('.shot');
-    var select = figure.querySelector('[data-spotlight]');
-    var buttons = figure.querySelectorAll('[data-guide-view]');
-    var original = [image.src, image.alt];
-    var active = null;
+  var queue = document.querySelector('.assembly');
+  var queueRows = Array.prototype.slice.call(document.querySelectorAll('[data-queue-row]'));
+  var selected = null;
+  var viewMode = null;
 
-    function showView() {
-      var action = select && select.value;
-      var target = action;
-      if (active) {
-        target = action && active.dataset.guideView === 'only'
-          ? action + '-only' : active.dataset.viewTarget;
-      }
-      var template = document.getElementById(target || '');
-      var shot = template ? template.content.querySelector('img') : null;
-      image.src = shot ? shot.src : original[0];
-      image.alt = shot ? shot.alt : original[1];
+  function showWire() {
+    if (!queue || !selected) return;
+    var image = queue.querySelector('.shot');
+    var target = viewMode === 'finished' ? 'finished-' + selected.dataset.face
+      : selected.dataset.target + (viewMode === 'only' ? '-only' : '');
+    var source = document.getElementById(target);
+    var shot = source && source.content.querySelector('img');
+    if (image) {
+      image.hidden = !shot;
+      if (shot) { image.src = shot.src; image.alt = shot.alt; }
     }
-
-    if (select) select.addEventListener('change', showView);
-    buttons.forEach(function (button) {
-      button.addEventListener('click', function () {
-        active = active === button ? null : button;
-        buttons.forEach(function (control) {
-          control.setAttribute('aria-pressed', control === active);
-        });
-        showView();
-      });
+    queue.querySelector('[data-active-caption]').textContent = selected.dataset.context;
+    queue.querySelectorAll('[data-guide-view]').forEach(function (button) {
+      var id = button.dataset.guideView === 'only' ? selected.dataset.target + '-only'
+        : 'finished-' + selected.dataset.face;
+      button.disabled = !document.getElementById(id);
+      button.setAttribute('aria-pressed', button.dataset.guideView === viewMode);
     });
+    var shape = document.getElementById('shape-' + selected.querySelector('input').id);
+    var detail = queue.querySelector('.active-template');
+    detail.hidden = !shape;
+    queue.querySelector('[data-active-template]').replaceChildren();
+    if (shape) queue.querySelector('[data-active-template]').appendChild(shape.content.cloneNode(true));
+    queueRows.forEach(function (row) {
+      row.querySelector('[data-select-step]').setAttribute('aria-pressed', row === selected);
+    });
+  }
+
+  function refreshQueue() {
+    if (!queue) return;
+    var pending = queueRows.filter(function (row) { return !row.querySelector('input').checked; });
+    if (!selected) selected = pending[0] || null;
+    queueRows.forEach(function (row) {
+      var parent = row === selected ? queue.querySelector('[data-active-row]')
+        : row.querySelector('input').checked ? queue.querySelector('[data-completed-list]')
+        : document.getElementById(row.dataset.group);
+      parent.appendChild(row);
+    });
+    queue.querySelectorAll('.work-group').forEach(function (group) {
+      group.hidden = !group.querySelector('[data-queue-row]');
+    });
+    queue.querySelector('.completed-list').hidden = !queue.querySelector('[data-completed-list] [data-queue-row]');
+    if (selected) showWire();
+    else {
+      queue.querySelector('[data-active-caption]').textContent = '__COMPLETE__';
+      queue.querySelector('.active-template').hidden = true;
+    }
+  }
+
+  queueRows.forEach(function (row) {
+    row.querySelector('[data-select-step]').addEventListener('click', function () {
+      selected = row;
+      refreshQueue();
+      queue.scrollIntoView({block: 'start'});
+    });
+  });
+  if (queue) queue.querySelectorAll('[data-guide-view]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      viewMode = viewMode === button.dataset.guideView ? null : button.dataset.guideView;
+      showWire();
+    });
+  });
+
+  document.querySelectorAll('.queue-context a').forEach(function (link) {
+    link.addEventListener('click', function () {
+      var target = document.getElementById(link.getAttribute('href').slice(1));
+      if (target) target.querySelector('details').open = true;
+    });
+  });
+
+  var printDetails = [];
+  window.addEventListener('beforeprint', function () {
+    printDetails = Array.prototype.slice.call(document.querySelectorAll('details:not([open])'));
+    printDetails.forEach(function (detail) { detail.open = true; });
+  });
+  window.addEventListener('afterprint', function () {
+    printDetails.forEach(function (detail) { detail.open = false; });
   });
 
   document.querySelectorAll('[data-guide-zoom]').forEach(function (button) {
@@ -506,9 +591,9 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     Deliberately not a framework. This file has to open from a USB stick on a phone in
     five years' time, which rules out every dependency that could stop existing.
 
-    ``step_images`` contains one whole-board image per group and face, keyed by the
-    ``guide.step_focus`` of its first action, plus optional ``action:<id>`` images. Pass raw image
-    bytes. Optional ``only:<key>`` and ``finished:<0 or 1>`` images enable board view toggles.
+    ``step_images`` contains whole-board action views keyed by ``action:<id>``. Pass raw
+    image bytes. ``only:action:<id>`` and ``finished:<0 or 1>`` enable board view toggles.
+    Legacy views keyed by a step focus are also accepted.
     This function base64s the images into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
     beside it, or a phone's network. Rendering them needs a board and a Qt scene, which is
@@ -579,41 +664,36 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     parts.append(_html_preparation(guide, say))
 
     images = step_images or {}
+    # Keep existing checkbox IDs even when the installation order changes.
     step_id = 0
+    ids = {}
+    check_ids = {}
     for phase in guide.phases:
-        if phase.is_empty or phase.number == 0:
+        if phase.number == 0:
+            continue
+        for step in phase.steps:
+            step_id += 1
+            ids[step_focus(step)] = f"s{step_id}"
+        for index, _ in enumerate(phase.checkpoints):
+            step_id += 1
+            check_ids[phase.number, index] = f"s{step_id}"
+    guide = replace(guide, phases=assembly_phases(guide))
+    parts.append(_html_assembly(guide, images, say, ids))
+    for phase in guide.phases:
+        if phase.number == 0 or phase.is_empty:
             continue
         parts.append(
-            '<section class="phase"><h2><span class="phase-num">'
+            f'<section class="phase phase-checks" id="phase-{phase.number}"><details class="checks"><summary><h2><span class="phase-num">'
             + say("Phase {number}", number=phase.number)
-            + f"</span> — {escape(phase.title)}</h2>"
-            f'<p class="sub">{escape(phase.summary)}</p>'
+            + f'</span> — {escape(phase.title)}</h2></summary><p class="sub">{escape(phase.summary)}</p>'
         )
-        for group in step_groups(phase, language=guide.language):
-            first = group[0]
-            title = (
-                say("Wire net {net}", net=first.net_name)
-                if isinstance(first, ConductorStep)
-                else say("Fit {parts}", parts=", ".join(
-                    step.ref for step in group if isinstance(step, PartStep)
-                ))
-            )
-            parts.append(f'<section class="work-group"><h3>{escape(title)}</h3>')
-            for bottom, work in step_groups_by_face(group):
-                face = say("Copper side" if bottom else "Component side")
-                picture = _html_step_image(step_focus(work[0]), images, f"{title} · {face}")
-                if picture:
-                    parts.append(_html_group_picture(picture, work, images, face, step_id, bottom, say))
-            for step in group:
-                step_id += 1
-                parts.append(_html_step(step, f"s{step_id}", say, guide.board))
-            parts.append("</section>")
         if phase.checkpoints:
-            parts.append("<h3>" + say("Check before moving on") + "</h3>")
-            for check in phase.checkpoints:
-                step_id += 1
-                parts.append(_html_check(check, f"s{step_id}", say, board=guide.board))
-        parts.append("</section>")
+            checks = "".join(
+                _html_check(check, check_ids[phase.number, index], say, board=guide.board)
+                for index, check in enumerate(phase.checkpoints)
+            )
+            parts.append(checks)
+        parts.append("</details></section>")
 
     for face_index in (0, 1):
         face = say("Copper side" if face_index else "Component side")
@@ -632,17 +712,19 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
             parts.extend(f"<li>{escape(text)}</li>" for text in cable.steps)
             parts.append("</ol>")
             if cable.checkpoints:
-                parts.append("<h3>" + say("Check before moving on") + "</h3>")
+                parts.append('<details class="checks"><summary>' + say("Check before moving on") + "</summary>")
                 for check in cable.checkpoints:
                     step_id += 1
                     parts.append(_html_check(check, f"s{step_id}", say, board=None))
+                parts.append("</details>")
         parts.append("</section>")
 
     parts.append(_html_tables(guide, say))
     parts.append(_html_templates(guide, say))
     # The counter's words go into the script as JavaScript string literals, which is why
     # a translation of them may hold no quote or backslash (tests/test_phrasebook.py).
-    script = _SCRIPT.replace("__OF__", say(" of ")).replace("__DONE__", say(" done"))
+    script = (_SCRIPT.replace("__OF__", say(" of ")).replace("__DONE__", say(" done"))
+              .replace("__COMPLETE__", say("All assembly actions completed.")))
     parts.append(
         '</main><div class="progress"><span class="count"></span>'
         '<span class="bar"><i></i></span>'
@@ -785,7 +867,7 @@ def _html_preparation(guide: Guide, say: Phrasebook) -> str:
             size=_board_mm(guide),
             a1='<span class="hole">A1</span>',
         ))
-        + f"</p>{_html_cuts(guide, say)}{checks}</section>"
+        + f"</p>{_html_cuts(guide, say)}{_html_checks(checks, say)}</section>"
     )
 
 
@@ -822,14 +904,6 @@ def _html_breadboard(guide: Guide, say: Phrasebook) -> str:
     )
 
 
-def _html_step(
-    step: GuideStep, dom_id: str, say: Phrasebook, board: Board
-) -> str:
-    if isinstance(step, PartStep):
-        return _html_part_step(step, dom_id, say=say, board=board)
-    return _html_conductor_step(step, dom_id, say=say, template=wire_template(step, board), board=board)
-
-
 #: Magic bytes to media type, longest signature first. A data URI carries its own type,
 #: so the one thing this must never do is guess: a JPEG announced as ``image/png`` is a
 #: broken picture in the one place there is no network to re-fetch it from.
@@ -857,55 +931,83 @@ def _image_media_type(data: bytes) -> str:
     return "application/octet-stream"
 
 
-def _html_group_picture(
-    picture: str, work: tuple[GuideStep, ...], images: Mapping[str, bytes],
-    face: str, group_index: int, bottom: bool, say: Phrasebook,
-) -> str:
-    options: list[str] = []
-    templates: list[str] = []
-    group_target = f"spot-{group_index}-{int(bottom)}"
-    only = _html_step_image(f"only:{step_focus(work[0])}", images, f"{say('Only this step')} · {face}")
-    if only:
-        templates.append(f'<template id="{group_target}-only">{only}</template>')
-    can_isolate = bool(only)
-    for i, step in enumerate(work):
-        individual = _html_step_image(f"action:{step_focus(step)}", images, f"{step.title} · {face}")
-        if individual:
-            target = f"{group_target}-{i}"
-            options.append(f'<option value="{target}">{escape(step.title)}</option>')
-            templates.append(f'<template id="{target}">{individual}</template>')
-            isolated = _html_step_image(
-                f"only:action:{step_focus(step)}", images, f"{say('Only this step')} · {step.title} · {face}"
-            )
-            if isolated:
-                templates.append(f'<template id="{target}-only">{isolated}</template>')
-            else:
-                can_isolate = False
-    select = (
-        f'<label>{escape(say("Spotlight"))} <select data-spotlight>'
-        f'<option value="">{escape(say("Whole group"))}</option>{"".join(options)}</select></label>'
-        if options else ""
-    )
-    summary = say(
-        "{count} component(s)" if isinstance(work[0], PartStep) else "{count} connection(s)",
-        count=len(work),
-    )
-    buttons = []
-    for mode, target, label, available in (
-        ("only", f"{group_target}-only", say("Only this step"), can_isolate),
-        ("finished", f"finished-{int(bottom)}", say("Finished board"), f"finished:{int(bottom)}" in images),
-    ):
-        if available:
-            buttons.append(
-                f'<button type="button" data-guide-view="{mode}" data-view-target="{target}" '
-                f'aria-pressed="false">{escape(label)}</button>'
-            )
-    legend = say("Gold labels mark the current work. Gray labels mark installed wire ends.")
+def _html_checks(checks: str, say: Phrasebook) -> str:
     return (
-        f'<figure><figcaption>{escape(face)} · {escape(summary)}<br>{escape(legend)}</figcaption>'
-        f'<div class="picture-tools">{select}{"".join(buttons)}'
-        f'<button type="button" data-guide-zoom aria-pressed="false">{escape(say("Zoom board"))}</button></div>'
-        f'<div class="shot-scroll">{picture}</div>{"".join(templates)}</figure>'
+        '<details class="checks"><summary>' + say("Check before moving on")
+        + f"</summary>{checks}</details>"
+    ) if checks else ""
+
+
+def _html_assembly(
+    guide: Guide, images: Mapping[str, bytes], say: Phrasebook, ids: Mapping[str, str],
+) -> str:
+    rows: list[str] = []
+    pictures: list[str] = []
+    first_picture = ""
+    for phase in guide.phases:
+        for group in step_groups(phase, language=guide.language):
+            first = group[0]
+            title = (say("Wire net {net}", net=first.net_name) if isinstance(first, ConductorStep)
+                     else say("Fit {parts}", parts=", ".join(step.ref for step in group if isinstance(step, PartStep))))
+            group_id = f"work-{len(rows)}"
+            context = f"{say('Phase {number}', number=phase.number)} · {phase.title} · {title}"
+            rows.append(f'<section class="work-group" id="{group_id}"><h3>{escape(context)}</h3>')
+            for step in group:
+                key = step_focus(step)
+                dom_id = ids[key]
+                bottom = step.side == "bottom" if isinstance(step, ConductorStep) else step.mirrored
+                face = say("Copper side" if bottom else "Component side")
+                target = f"spot-{dom_id}"
+                instruction = say("Fit {parts}", parts=step.title) if isinstance(step, PartStep) else step.title
+                for suffix, image_key in (("", f"action:{key}"), ("-only", f"only:action:{key}")):
+                    picture = _html_step_image(image_key, images, f"{instruction} · {face}")
+                    if not picture:
+                        picture = _html_step_image(("only:" if suffix else "") + key, images, f"{instruction} · {face}")
+                    if picture:
+                        pictures.append(f'<template id="{target}{suffix}">{picture}</template>')
+                        if not first_picture and not suffix:
+                            first_picture = picture
+                card = (_html_part_step(step, dom_id, say=say, board=guide.board)
+                        if isinstance(step, PartStep) else
+                        _html_conductor_step(step, dom_id, say=say, board=guide.board))
+                # A row has explicit controls, so clicking its text must not tick it off.
+                card = card.replace(f'<label class="step" for="{dom_id}">',
+                    f'<div class="step" data-queue-row data-group="{group_id}" '
+                    f'data-target="{target}" data-face="{int(bottom)}" data-context="{escape(context)}">', 1)
+                card = card.removesuffix("</label>") + "</div>"
+                card = card.replace(f'<input type="checkbox" id="{dom_id}">', "", 1)
+                controls = (f'<div class="wire-controls"><button type="button" data-select-step '
+                            f'aria-pressed="false">{say("Select")}</button>'
+                            f'<label><input type="checkbox" id="{dom_id}"> {say("Completed")}</label></div>')
+                card = card.replace('<span class="body">', '<span class="body">' +
+                                    f'<div class="meta queue-context">{escape(context)} · {escape(face)} · '
+                                    f'<a href="#phase-{phase.number}">{say("Check before moving on")}</a></div>', 1)
+                card = card.removesuffix("</div>") + controls + "</div>"
+                if isinstance(step, ConductorStep) and step.cut:
+                    template = wire_template(step, guide.board)
+                    if template:
+                        pictures.append(f'<template id="shape-{dom_id}">' +
+                            _template_pair(template, step, step.cut, TEMPLATE_PREVIEW_SCALE, board=guide.board) + '</template>')
+                rows.append(card)
+            rows.append("</section>")
+    if not rows:
+        return ""
+    buttons = ''.join(
+        f'<button type="button" data-guide-view="{mode}" aria-pressed="false">{escape(label)}</button>'
+        for mode, label in (("only", say("Only this step")), ("finished", say("Finished board")))
+    ) if first_picture else ""
+    return (
+        '<section class="phase assembly" id="assembly"><h2>' + say("Build the board") + '</h2><p class="sub">'
+        + say("Follow the list from top to bottom. Lower crossing wires come first. Select a row to spotlight it; completed work moves to the bottom.")
+        + '</p><figure class="assembly-viewer"><figcaption data-active-caption></figcaption>'
+        + f'<div class="shot-scroll">{first_picture}</div><div class="picture-tools">{buttons}'
+        + (f'<button type="button" data-guide-zoom aria-pressed="false">{say("Zoom board")}</button>' if first_picture else "")
+        + '</div></figure><div data-active-row></div>'
+        + '<details class="active-template"><summary>' + say("Wire shape and length")
+        + '</summary><div class="tpl-pair" data-active-template></div></details>'
+        + f'<div data-pending-list>{"".join(rows)}</div><details class="completed-list"><summary>'
+        + say("Completed") + '</summary><div data-completed-list></div></details>'
+        + ''.join(pictures) + '</section>'
     )
 
 
@@ -1290,7 +1392,7 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
     if not items:
         return ""
     return (
-        f'<section class="phase templates"><h2>{say("Wire templates (1:1)")}</h2><p>'
+        f'<section class="phase templates"><details><summary><h2>{say("Wire templates (1:1)")}</h2></summary><p>'
         + say(
             "Print these pages at 100 % — actual size, not fit to page — and hold the bar "
             "below against a ruler: if it is not {ruler} mm, the printer has scaled them. "
@@ -1302,7 +1404,7 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
             "The dashed blue marks show bends along the board. Copper-colored ends are bare wire.",
             ruler=RULER_MM,
         )
-        + f'</p>{_ruler_svg()}<div class="tpl-grid">{"".join(items)}</div></section>'
+        + f'</p>{_ruler_svg()}<div class="tpl-grid">{"".join(items)}</div></details></section>'
     )
 
 
