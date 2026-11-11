@@ -612,9 +612,7 @@ def test_an_unroutable_board_is_reported_rather_than_described_as_finished() -> 
 
 
 def test_cut_length_is_the_path_plus_both_ends() -> None:
-    """path + 2 x (board thickness + bend allowance) + 2 x strip. The thickness is in
-    there because the wire goes THROUGH the board and turns over on the far side;
-    leaving it out is how a cut list produces wires that are each 4 mm short."""
+    """The stripped tail includes the length through the board and the far-side bend."""
     doc = make_doc(
         components=(component("R1", "r-axial-4", hole(2, 2)),),
         conductors=(
@@ -626,7 +624,46 @@ def test_cut_length_is_the_path_plus_both_ends() -> None:
 
     cut = guide.cut_list[0]
     assert cut.path_mm == pytest.approx(4 * BOARD.pitch)
-    assert cut.cut_mm == pytest.approx(4 * BOARD.pitch + 2 * (1.6 + 3.0) + 2 * 5.0)
+    assert cut.cut_mm == pytest.approx(4 * BOARD.pitch + 2 * 5.0)
+
+
+
+def test_insulated_tail_is_long_enough_for_the_board() -> None:
+    doc = make_doc(conductors=(
+        WireConductor(id="cond-1", path=(hole(2, 2), hole(2, 6)), kind="insulated-wire"),
+    ))
+    cut = build_guide(doc, REGISTRY, GuideOptions(strip_length_mm=1)).cut_list[0]
+    assert cut.strip_mm == pytest.approx(BOARD.thickness + 3)
+    assert cut.cut_mm == pytest.approx(cut.path_mm + 2 * cut.strip_mm)
+
+
+def test_u_template_has_two_bare_holes_then_one_three_one_insulated_holes() -> None:
+    import itertools
+    import math
+    import re
+
+    from perfboard_studio.guide_export import _straight_svg
+
+    path = (hole(11, 15), hole(11, 16), hole(14, 16), hole(14, 15))
+    doc = make_doc(conductors=(
+        WireConductor(id="u", path=path, kind="insulated-wire", side="bottom"),
+    ))
+    guide = build_guide(doc, REGISTRY, GuideOptions(strip_length_mm=2 * BOARD.pitch))
+    step = _wire_steps(guide)[0]
+    assert step.cut is not None
+    template = wire_template(step, BOARD)
+    assert template is not None
+    lengths = [math.dist(a, b) / BOARD.pitch for a,b in itertools.pairwise(template.shape)]
+    assert lengths == pytest.approx([2, 1, 3, 1, 2])
+    assert step.cut.cut_mm / BOARD.pitch == pytest.approx(9)
+    assert [mark.kind for mark in template.marks] == ["through", "turn", "turn", "through"]
+    assert [mark.at_mm / BOARD.pitch for mark in template.marks] == pytest.approx([2, 3, 6, 7])
+    svg = _straight_svg(template, step, step.cut, 1, board=BOARD)
+    labels = re.findall(r'<text[^>]*>([^<]*)</text>', svg)
+    assert labels == ["L16", "O16", "2", "1", "3", "1", "2"]
+    html = guide_to_html(guide)
+    assert "Cut 9 holes" in html and "strip 2 holes at each end" in html
+    assert "5 holes" in html
 
 
 def test_bare_wire_is_not_charged_a_stripping_allowance() -> None:
@@ -673,11 +710,9 @@ def test_a_wire_template_is_the_cut_list_length_bent_where_the_holes_are() -> No
         assert template.bends == (1, 2, 3)
         leg = (step.cut.cut_mm - step.cut.path_mm) / 2
         assert [(mark.kind, mark.at_mm) for mark in template.marks] == [
-            ("strip", pytest.approx(step.cut.strip_mm)),
             ("through", pytest.approx(leg)),
             ("turn", pytest.approx(leg + 4 * BOARD.pitch)),
             ("through", pytest.approx(leg + 7 * BOARD.pitch)),
-            ("strip", pytest.approx(step.cut.cut_mm - step.cut.strip_mm)),
         ]
         inside = [
             0 <= x <= template.width_mm and 0 <= y <= template.height_mm

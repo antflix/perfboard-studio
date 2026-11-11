@@ -2029,18 +2029,13 @@ def _wire_cut(
     insulated: bool,
     options: GuideOptions,
 ) -> WireCut:
-    """Cut length, per PLAN.md Sec 7.3.
-
-    ``path + 2 x (board thickness + bend allowance) + 2 x strip length``. The board
-    thickness is in there because the wire goes THROUGH the board at each end and has to
-    turn over on the far side; leaving it out is how a cut list produces wires that are
-    each 4 mm too short.
-    """
+    """The routed path plus two tails. An insulated tail includes its board allowance."""
     path_mm = path_length_mm(path, board)
     # Bare wire is not stripped, because there is nothing on it to strip. Charging it the
     # allowance anyway would pad every bare run by a centimetre.
-    strip_mm = options.strip_length_mm if insulated else 0.0
-    ends = 2 * (board.thickness + options.bend_allowance_mm) + 2 * strip_mm
+    tail_mm = board.thickness + options.bend_allowance_mm
+    strip_mm = max(options.strip_length_mm, tail_mm) if insulated else 0.0
+    ends = 2 * (strip_mm if insulated else tail_mm)
     if is_breadboard(board):
         # A breadboard jumper does not go THROUGH anything: its stripped ends bend down
         # into the clips and that is the whole of them, so the wire is the path and two
@@ -2207,7 +2202,7 @@ def wire_template(step: ConductorStep, board: Board) -> WireTemplate | None:
         WireMark(along[index], "through" if index in (1, len(shape) - 2) else "turn")
         for index in bends
     ]
-    if cut.strip_mm > 0:
+    if cut.strip_mm > 0 and not math.isclose(cut.strip_mm, leg):
         marks = [
             WireMark(cut.strip_mm, "strip"),
             *marks,
@@ -2758,39 +2753,39 @@ def _tools(
         colours = ", ".join(
             sorted({say(cut.colour) for cut in hookup} | {say(lead.colour) for lead in leads})
         )
-        metres = (
+        hole_spacings = (
             sum(cut.cut_mm for cut in hookup) + sum(lead.cut_mm or 0.0 for lead in leads)
-        ) / 1000
+        ) / doc.board.pitch
         if breadboard:
             # SOLID core, and it has to be said: a stranded wire frays in a clip instead of
             # going into it, and is the reel most people reach for first.
             tools.append(say(
-                "Solid-core hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in "
+                "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in "
                 "total. Not stranded: a stranded end frays in the clip instead of going in.",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings,
             ))
         elif any(lead.cut_mm is None for lead in leads):
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m, plus the "
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings, plus the "
                 "wires to the parts off the board, cut to fit",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings,
             ))
         else:
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in total",
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} hole spacings in total",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings,
             ))
     if bare:
         tools.append(say(
-            "Bare tinned copper wire, AWG {gauges} — about {metres:.2f} m in total",
+            "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} hole spacings in total",
             gauges=_gauges(bare),
-            metres=sum(cut.cut_mm for cut in bare) / 1000,
+            holes=sum(cut.cut_mm for cut in bare) / doc.board.pitch,
         ))
     if hookup or leads:
         tools.append(say("Wire strippers"))

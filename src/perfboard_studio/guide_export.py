@@ -34,6 +34,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import itertools
 import json
 import math
 from collections.abc import Mapping
@@ -245,9 +246,14 @@ def cut_list_to_csv(guide: Guide) -> str:
     return out.getvalue()
 
 
+def _hole_length(length_mm: float, board: Board | None, say: Phrasebook) -> str:
+    pitch = board.pitch if board is not None else 2.54
+    return say("{length:g} holes", length=round(length_mm / pitch, 2))
+
+
 def _html_lead_row(lead: LeadCut, say: Phrasebook, *, board: Board | None) -> str:
     """A wire to a part off the board, in the cut list's table: one hole, and the lug."""
-    cut = say("cut to fit") if lead.cut_mm is None else f"{lead.cut_mm:.0f} mm"
+    cut = say("cut to fit") if lead.cut_mm is None else _hole_length(lead.cut_mm, board, say)
     return (
         f"<tr><td>{say('wire off the board')}</td><td>{escape(lead.net_name)}</td>"
         f"<td>{_hole(lead.hole, board=board)}</td>"
@@ -935,9 +941,8 @@ def _html_part_step(
         bits.append(
             '<div class="note">'
             + say(
-                "Bend the leads to {pitch:.2f} mm ({holes:.0f} holes).",
-                pitch=step.bend_template_mm,
-                holes=step.bend_template_mm / 2.54,
+                "Bend the leads to {length}.",
+                length=_hole_length(step.bend_template_mm, board, say),
             )
             + "</div>"
         )
@@ -972,7 +977,7 @@ def _html_conductor_step(
         if step.path
         else f'<div class="title">{escape(step.title)}</div>',
         f'<div class="meta">{escape(_conductor_word(step, say))} · '
-        f"{step.length_mm:.1f} mm"
+        + escape(_hole_length(step.length_mm, board, say))
         + (" · " + say("{pads} pads", pads=step.pads) if step.pads > 2 else "")
         + (
             " · " + say("about {milliohm:.1f} mΩ", milliohm=step.resistance_ohm * 1000)
@@ -998,15 +1003,15 @@ def _html_conductor_step(
         # Bare wire has nothing to strip, and "strip 0 mm at each end" is an instruction
         # to do nothing -- so the clause is left out rather than printed as a zero.
         strip = (
-            say(", strip {strip:.0f} mm at each end", strip=step.cut.strip_mm)
+            say(", strip {length} at each end", length=_hole_length(step.cut.strip_mm, board, say))
             if step.cut.strip_mm > 0
             else ""
         )
         bits.append(
             '<div class="note">'
             + say(
-                "Cut {length:.0f} mm of {colour} AWG {awg}{strip}.",
-                length=step.cut.cut_mm,
+                "Cut {length} of {colour} AWG {awg}{strip}.",
+                length=_hole_length(step.cut.cut_mm, board, say),
                 colour=escape(say(step.cut.colour)),
                 awg=step.cut.awg,
                 strip=strip,
@@ -1025,8 +1030,8 @@ def _html_conductor_step(
         bits.append(
             '<div class="note">'
             + say(
-                "Reinforcing wire: {length:.0f} mm of {gauge:g} mm {material}.",
-                length=step.spine.length_mm,
+                "Reinforcing wire: {length} of {gauge:g} mm {material}.",
+                length=_hole_length(step.spine.length_mm, board, say),
                 gauge=step.spine.gauge_mm,
                 material=escape(say(step.spine.material)),
             )
@@ -1191,15 +1196,10 @@ _MARK_INK: dict[WireMarkKind, str] = {"strip": "#333333", "through": _BEND_INK, 
 
 
 def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, scale: float, *, board: Board | None) -> str:
-    """The same wire straight, at 1:1: what is cut and marked before anything is bent.
-
-    Each mark's distance from the left-hand tip is printed under it, so a whole wire is
-    marked from one end with one ruler and no error adds up from mark to mark. The two
-    tips are named by the holes they end in, which is what says which way round to hold it.
-    """
+    """Label distances between successive marks in board hole spacings."""
     ink, width = _wire_ink(cut)
     m, length, y = TEMPLATE_MARGIN_MM, template.length_mm, 6.0
-    rows = (y + 4.6, y + 7.2)
+    pitch = board.pitch if board is not None else 2.54
     body = [_wire_line([(m, y), (m + length, y)], ink, width)]
     if template.strip_mm > 0:
         for start in (0.0, length - template.strip_mm):
@@ -1209,25 +1209,23 @@ def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, sca
             )
     body.append(_label(m, y - 2.2, format_hole(step.path[0], board), "start"))
     body.append(_label(m + length, y - 2.2, format_hole(step.path[-1], board), "end"))
-    # A number drops to the second row when it would touch the last one on the first: a
-    # corner one pitch from a bend puts two distances 2.54 mm apart. The tip's own number,
-    # last, is the whole length -- the cut list's figure, where the wire is cut.
-    last_on_first_row = -math.inf
-    for mark in (*template.marks, None):
-        at = length if mark is None else mark.at_mm
-        x = m + at
-        text = f"{at:.1f}"
-        row = 0 if x - last_on_first_row >= len(text) * _CHAR_MM * 0.75 else 1
+    for mark in template.marks:
+        x = m + mark.at_mm
+        dash = _TURN_DASH if mark.kind == "turn" else ""
+        body.append(
+            f'<line x1="{x:.2f}" y1="{y - 1.5:.2f}" x2="{x:.2f}" y2="{y + 2:.2f}" '
+            f'stroke="{_MARK_INK[mark.kind]}" stroke-width=".35"{dash}/>'
+        )
+    positions = sorted({0.0, *(mark.at_mm for mark in template.marks), length})
+    last_label = -math.inf
+    for left, right in itertools.pairwise(positions):
+        x = m + (left + right) / 2
+        text = f"{round((right - left) / pitch, 2):g}"
+        row = 0 if x - last_label >= len(text) * _CHAR_MM * .75 else 1
         if row == 0:
-            last_on_first_row = x
-        if mark is not None:
-            dash = _TURN_DASH if mark.kind == "turn" else ""
-            body.append(
-                f'<line x1="{x:.2f}" y1="{y - 1.5:.2f}" x2="{x:.2f}" y2="{rows[row] - 2:.2f}" '
-                f'stroke="{_MARK_INK[mark.kind]}" stroke-width=".35"{dash}/>'
-            )
-        body.append(_label(x, rows[row], text, size=2.0))
-    return _svg(length + 2 * m, rows[1] + 1.0, scale, "".join(body))
+            last_label = x
+        body.append(_label(x, y + 4.6 + row * 2.6, text, size=2.0))
+    return _svg(length + 2 * m, y + 8.2, scale, "".join(body))
 
 
 def _template_pair(
@@ -1277,8 +1275,8 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
             else say("from the solder side")
         )
         meta = say(
-            "{length:.0f} mm · {colour} · AWG {awg}",
-            length=step.cut.cut_mm,
+            "{length} · {colour} · AWG {awg}",
+            length=_hole_length(step.cut.cut_mm, guide.board, say),
             colour=escape(say(step.cut.colour)),
             awg=step.cut.awg,
         )
@@ -1296,10 +1294,10 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
         + say(
             "Print these pages at 100 % — actual size, not fit to page — and hold the bar "
             "below against a ruler: if it is not {ruler} mm, the printer has scaled them. "
-            "Cut each wire to the length of its straight drawing and mark it there: a dark "
-            "mark is where the insulation is cut, a solid blue one where the wire goes down "
-            "through the board, a dashed one where it turns along it. Then bend it to the "
-            "shape beside, drawn as seen from the face the wire lies on.",
+            "Each number is the distance between consecutive marks, measured in hole spacings. "
+            "One hole means one center-to-center spacing between adjacent board holes. "
+            "The solid blue marks show where the wire enters the board and the insulation ends. "
+            "The dashed blue marks show bends along the board. Copper-colored ends are bare wire.",
             ruler=RULER_MM,
         )
         + f'</p>{_ruler_svg()}<div class="tpl-grid">{"".join(items)}</div></section>'
@@ -1340,14 +1338,14 @@ def _html_tables(guide: Guide, say: Phrasebook) -> str:
             parts.append(
                 f"<tr><td>{_wire_type(cut.insulated, say)}</td>"
                 f"<td>{escape(cut.net_name)}</td><td>{_hole(cut.from_hole, board=guide.board)}</td>"
-                f"<td>{_hole(cut.to_hole, board=guide.board)}</td><td>{cut.cut_mm:.0f} mm</td>"
+                f"<td>{_hole(cut.to_hole, board=guide.board)}</td><td>{escape(_hole_length(cut.cut_mm, guide.board, say))}</td>"
                 f"<td>{cut.awg}</td><td>{escape(say(cut.colour))}</td></tr>"
             )
         for lead in guide.lead_list:
             parts.append(_html_lead_row(lead, say, board=guide.board))
         for cable in guide.harness:
             for wire in cable.wires:
-                length = say("cut to fit") if wire.cut_mm is None else f"{wire.cut_mm:.0f} mm"
+                length = say("cut to fit") if wire.cut_mm is None else _hole_length(wire.cut_mm, guide.board, say)
                 parts.append(
                     f"<tr><td>{say('cable wire')} ({escape(cable.ref)})</td>"
                     f"<td>{escape(wire.net_name)}</td><td>{escape(harness_end(wire.a, say))}</td>"
@@ -1358,7 +1356,7 @@ def _html_tables(guide: Guide, say: Phrasebook) -> str:
             parts.append(
                 f"<tr><td>{say('reinforcing wire')}</td><td>{escape(spine.net_name)}</td>"
                 f"<td colspan=2>{say('{pads} pads', pads=spine.pads)}</td>"
-                f"<td>{spine.length_mm:.0f} mm</td>"
+                f"<td>{escape(_hole_length(spine.length_mm, guide.board, say))}</td>"
                 f"<td>{spine.gauge_mm:g} mm</td><td>{escape(say(spine.material))}</td></tr>"
             )
         parts.append("</table></div>")
