@@ -1,12 +1,12 @@
 tür,net,nereden,nereye,yol_mm,kesim_mm,soyma_mm,awg,renk,not
-izoleli tel,GND,X11,T11,10.2,29.4,5.0,24,siyah,
+izoleli tel,GND,X11,T11,10.2,20.2,5.0,24,siyah,
 çıplak tel,GND,Y3,X11,20.5,29.7,0.0,24,kalaylı bakır,
-izoleli tel,GND,D11,B3,20.9,40.1,5.0,24,siyah,
+izoleli tel,GND,D11,B3,20.9,30.9,5.0,24,siyah,
 çıplak tel,VCC,I3,E3,10.2,19.4,0.0,24,kalaylı bakır,
 çıplak tel,VCC,W11,I3,41.0,50.2,0.0,24,kalaylı bakır,
 çıplak tel,THRESH,E5,B4,8.0,17.2,0.0,24,kalaylı bakır,
-izoleli tel,THRESH,T3,E5,38.4,57.6,5.0,24,mavi,
-izoleli tel,DISCH,M3,E4,20.5,39.7,5.0,24,beyaz,
+izoleli tel,THRESH,T3,E5,38.4,48.4,5.0,24,mavi,
+izoleli tel,DISCH,M3,E4,20.5,30.5,5.0,24,beyaz,
 çıplak tel,CTRL,B11,E6,14.8,24.0,0.0,24,kalaylı bakır,
-izoleli tel,OUT,I11,B5,23.4,42.6,5.0,24,sarı,
+izoleli tel,OUT,I11,B5,23.4,33.4,5.0,24,sarı,
 takviye teli,GND,,,50.8,50.8,0.0,,kalaylı bakır,"0.6 mm, 21 ped boyunca"

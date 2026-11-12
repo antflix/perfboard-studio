@@ -20,8 +20,8 @@
     "Flux — kalem ya da küçük bir kutu. Lehim yolları onsuz güvenilir biçimde yapılamaz",
     "Yan keski ve küçük bir pense",
     "Süreklilik buzzer'ı olan bir multimetre (aşağıdaki her kontrol noktası onu kullanır)",
-    "Bağlantı teli, AWG 24, renkler: beyaz, mavi, sarı, siyah — toplam yaklaşık 0.21 m",
-    "Çıplak kalaylı bakır tel, AWG 24 — toplam yaklaşık 0.14 m",
+    "beyaz, mavi, sarı, siyah renklerinde AWG 24 bağlantı teli — toplam yaklaşık 65 delik aralığı",
+    "Çıplak kalaylı bakır tel, AWG 24 — toplam yaklaşık 56 delik aralığı",
     "Tel sıyırıcı",
     "Lehim yollarını güçlendirmek için kalaylı bakır tel, 0.6 mm — yaklaşık 51 mm (parça bacağı artıkları da aynı işi görür)"
   ],
@@ -107,7 +107,7 @@
         "ref": "T11"
       },
       "path_mm": 10.160000000000004,
-      "cut_mm": 29.360000000000003,
+      "cut_mm": 20.160000000000004,
       "strip_mm": 5.0,
       "awg": 24,
       "colour": "black",
@@ -147,7 +147,7 @@
         "ref": "B3"
       },
       "path_mm": 20.945376578137715,
-      "cut_mm": 40.145376578137714,
+      "cut_mm": 30.945376578137715,
       "strip_mm": 5.0,
       "awg": 24,
       "colour": "black",
@@ -227,7 +227,7 @@
         "ref": "E5"
       },
       "path_mm": 38.43717471407075,
-      "cut_mm": 57.63717471407075,
+      "cut_mm": 48.43717471407075,
       "strip_mm": 5.0,
       "awg": 24,
       "colour": "blue",
@@ -247,7 +247,7 @@
         "ref": "E4"
       },
       "path_mm": 20.478134680678316,
-      "cut_mm": 39.67813468067831,
+      "cut_mm": 30.478134680678316,
       "strip_mm": 5.0,
       "awg": 24,
       "colour": "white",
@@ -287,7 +287,7 @@
         "ref": "B5"
       },
       "path_mm": 23.417642921523935,
-      "cut_mm": 42.61764292152394,
+      "cut_mm": 33.417642921523935,
       "strip_mm": 5.0,
       "awg": 24,
       "colour": "yellow",
@@ -1391,14 +1391,17 @@
               "ref": "T11"
             },
             "path_mm": 10.160000000000004,
-            "cut_mm": 29.360000000000003,
+            "cut_mm": 20.160000000000004,
             "strip_mm": 5.0,
             "awg": 24,
             "colour": "black",
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         },
         {
           "kind": "conductor",
@@ -1440,14 +1443,18 @@
               "ref": "B3"
             },
             "path_mm": 20.945376578137715,
-            "cut_mm": 40.145376578137714,
+            "cut_mm": 30.945376578137715,
             "strip_mm": 5.0,
             "awg": 24,
             "colour": "black",
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-12",
+            "cond-8"
+          ]
         },
         {
           "kind": "conductor",
@@ -1489,14 +1496,17 @@
               "ref": "E4"
             },
             "path_mm": 20.478134680678316,
-            "cut_mm": 39.67813468067831,
+            "cut_mm": 30.478134680678316,
             "strip_mm": 5.0,
             "awg": 24,
             "colour": "white",
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         },
         {
           "kind": "conductor",
@@ -1538,14 +1548,19 @@
               "ref": "B5"
             },
             "path_mm": 23.417642921523935,
-            "cut_mm": 42.61764292152394,
+            "cut_mm": 33.417642921523935,
             "strip_mm": 5.0,
             "awg": 24,
             "colour": "yellow",
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-4",
+            "cond-12",
+            "cond-3"
+          ]
         },
         {
           "kind": "conductor",
@@ -1587,14 +1602,17 @@
               "ref": "E5"
             },
             "path_mm": 38.43717471407075,
-            "cut_mm": 57.63717471407075,
+            "cut_mm": 48.43717471407075,
             "strip_mm": 5.0,
             "awg": 24,
             "colour": "blue",
             "insulated": true
           },
           "risks": [],
-          "notes": []
+          "notes": [],
+          "install_after": [
+            "cond-6"
+          ]
         }
       ],
       "checkpoints": [

@@ -56,7 +56,11 @@ def test_roundtrip_and_legacy_hole_cut():
     guide = build_guide(restored, lambda _name: None)
     gap = next(cut for cut in guide.track_cuts if cut.to is not None)
     assert gap.separates == (a, b)
-    assert "B3" in guide_to_html(guide) and "C3" in guide_to_html(guide)
+    html = guide_to_html(guide)
+    assert "B3" in html and "C3" in html
+    assert html.count('id="track-cut-') == 2
+    assert "<select data-cut-filter>" in html
+    assert html.count("data-cut-strip=") == 4
 
 
 def test_command_rejects_wrong_axis_and_duplicate():

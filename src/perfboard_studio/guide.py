@@ -33,7 +33,7 @@ the bench while you solder the short ones), the solder side is done in blocks as
 group is fitted, long wires come after, and the ICs go in last -- heat and ESD.
 
 WHAT IS NOT HERE, said plainly so nobody has to look for it: the picture on each step
-card (PLAN.md Sec 7.2). It needs the renderer, so ``ui/view3d.render_step_images`` makes
+card (PLAN.md Sec 7.2). It needs the renderer, so ``ui/guide_images.render_guide_images`` makes
 it -- one per step, shot from the face the work is done on -- and the window, the MCP
 server, ``--headless`` and a project save hand it to ``guide_export.guide_to_html``.
 Without GL there is no picture, which is why the text steps here are written to stand on
@@ -55,6 +55,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache, partial
+from itertools import groupby
 from typing import TYPE_CHECKING, Literal, get_args
 
 from .breadboard import has_breadboard_pattern, has_rails, is_breadboard
@@ -82,6 +83,7 @@ from .geometry import (
     legend_label,
     legend_run_spans,
     path_length_mm,
+    paths_cross,
     row_label,
     transform_offset,
 )
@@ -111,6 +113,7 @@ from .model import (
     declared_pin_name,
     pin_name_of,
 )
+from .occupancy import stacking_layers
 from .phrasebook import ENGLISH, GuideLanguage, Phrasebook, phrasebook
 from .stripboard import is_stripboard, strip_axis
 
@@ -609,6 +612,9 @@ class ConductorStep:
     cut: WireCut | None
     risks: tuple[RiskNote, ...]
     notes: tuple[str, ...]
+    install_after: tuple[ConductorId, ...] = dataclasses.field(
+        default=(), metadata={JSON_OMITTED_AT_DEFAULT: True}
+    )
 
     @property
     def title(self) -> str:
@@ -751,6 +757,16 @@ def build_guide(
     conductor_steps, cut_list, spine_list = _conductor_steps(
         doc, nets_by_id, color_by_net, violations, options, say
     )
+    layers = stacking_layers(doc)
+    conductor_steps = [
+        (dataclasses.replace(step, install_after=tuple(
+            other.conductor_id for other, _ in conductor_steps
+            if other.side == step.side
+            and layers[other.conductor_id] < layers[step.conductor_id]
+            and paths_cross(other.path, step.path) is not None
+        )), phase)
+        for step, phase in conductor_steps
+    ]
     lead_list = _lead_cuts(doc, lookup, color_by_net, options, say)
     # A part off the board is wired after the copper, so a net reaching it is not finished
     # until its wires are in -- and a continuity check asked for before then fails for a
@@ -1836,6 +1852,8 @@ def _conductor_steps(
     spine_list: list[SpineCut] = []
 
     for conductor in doc.conductors:
+        if conductor.kind == "strip":
+            continue  # Factory copper is already on the bare board.
         net = nets_by_id.get(conductor.net_id) if conductor.net_id else None
         net_name = net.name if net is not None else say("(unassigned)")
         net_class: NetClass = net.net_class if net is not None else "signal"
@@ -2028,18 +2046,13 @@ def _wire_cut(
     insulated: bool,
     options: GuideOptions,
 ) -> WireCut:
-    """Cut length, per PLAN.md Sec 7.3.
-
-    ``path + 2 x (board thickness + bend allowance) + 2 x strip length``. The board
-    thickness is in there because the wire goes THROUGH the board at each end and has to
-    turn over on the far side; leaving it out is how a cut list produces wires that are
-    each 4 mm too short.
-    """
+    """The routed path plus two tails. An insulated tail includes its board allowance."""
     path_mm = path_length_mm(path, board)
     # Bare wire is not stripped, because there is nothing on it to strip. Charging it the
     # allowance anyway would pad every bare run by a centimetre.
-    strip_mm = options.strip_length_mm if insulated else 0.0
-    ends = 2 * (board.thickness + options.bend_allowance_mm) + 2 * strip_mm
+    tail_mm = board.thickness + options.bend_allowance_mm
+    strip_mm = max(options.strip_length_mm, tail_mm) if insulated else 0.0
+    ends = 2 * (strip_mm if insulated else tail_mm)
     if is_breadboard(board):
         # A breadboard jumper does not go THROUGH anything: its stripped ends bend down
         # into the clips and that is the whole of them, so the wire is the path and two
@@ -2206,7 +2219,7 @@ def wire_template(step: ConductorStep, board: Board) -> WireTemplate | None:
         WireMark(along[index], "through" if index in (1, len(shape) - 2) else "turn")
         for index in bends
     ]
-    if cut.strip_mm > 0:
+    if cut.strip_mm > 0 and not math.isclose(cut.strip_mm, leg):
         marks = [
             WireMark(cut.strip_mm, "strip"),
             *marks,
@@ -2757,39 +2770,39 @@ def _tools(
         colours = ", ".join(
             sorted({say(cut.colour) for cut in hookup} | {say(lead.colour) for lead in leads})
         )
-        metres = (
+        hole_spacings = (
             sum(cut.cut_mm for cut in hookup) + sum(lead.cut_mm or 0.0 for lead in leads)
-        ) / 1000
+        ) / doc.board.pitch
         if breadboard:
             # SOLID core, and it has to be said: a stranded wire frays in a clip instead of
             # going into it, and is the reel most people reach for first.
             tools.append(say(
-                "Solid-core hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in "
+                "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in "
                 "total. Not stranded: a stranded end frays in the clip instead of going in.",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings + 1,
             ))
         elif any(lead.cut_mm is None for lead in leads):
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m, plus the "
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes, plus the "
                 "wires to the parts off the board, cut to fit",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings + 1,
             ))
         else:
             tools.append(say(
-                "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in total",
+                "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in total",
                 gauges=gauges,
                 colours=colours,
-                metres=metres,
+                holes=hole_spacings + 1,
             ))
     if bare:
         tools.append(say(
-            "Bare tinned copper wire, AWG {gauges} — about {metres:.2f} m in total",
+            "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} holes in total",
             gauges=_gauges(bare),
-            metres=sum(cut.cut_mm for cut in bare) / 1000,
+            holes=sum(cut.cut_mm for cut in bare) / doc.board.pitch + 1,
         ))
     if hookup or leads:
         tools.append(say("Wire strippers"))
@@ -3041,6 +3054,71 @@ def all_steps(guide: Guide) -> tuple[GuideStep, ...]:
     return tuple(step for phase in guide.phases for step in phase.steps)
 
 
+def assembly_phases(guide: Guide) -> tuple[GuidePhase, ...]:
+    """Lay lower crossing wires first; keep nets together when dependencies permit."""
+    wires = {
+        step.conductor_id: step for step in all_steps(guide) if isinstance(step, ConductorStep)
+    }
+    phase_of = {
+        step.conductor_id: phase.number for phase in guide.phases for step in phase.steps
+        if isinstance(step, ConductorStep)
+    }
+    # A lower wire must be available before an upper wire is trapped under a part.
+    for _ in wires:
+        changed = False
+        for wire in wires.values():
+            for lower in wire.install_after:
+                if lower in phase_of and phase_of[lower] > phase_of[wire.conductor_id]:
+                    phase_of[lower] = phase_of[wire.conductor_id]
+                    changed = True
+        if not changed:
+            break
+    phases = []
+    laid: set[str] = set()
+    for phase in guide.phases:
+        pending = [wire for key, wire in wires.items() if phase_of[key] == phase.number]
+        ordered: list[GuideStep] = []
+        previous = None
+        while pending:
+            ready = [wire for wire in pending if all(
+                lower not in wires or lower in laid for lower in wire.install_after
+            )]
+            if not ready:
+                raise ValueError("Cyclic wire installation dependencies")
+            wire = next((wire for wire in ready if wire.net_name == previous), ready[0])
+            ordered.append(wire)
+            laid.add(wire.conductor_id)
+            pending.remove(wire)
+            previous = wire.net_name
+        parts = [step for step in phase.steps if isinstance(step, PartStep)]
+        steps = [*ordered, *parts] if phase.number == 1 else [*parts, *ordered]
+        phases.append(dataclasses.replace(phase, steps=tuple(steps)))
+    return tuple(phases)
+
+
+def step_groups(phase: GuidePhase, *, language: GuideLanguage = "en") -> tuple[tuple[GuideStep, ...], ...]:
+    """Batch adjacent work while respecting phase boundaries and fit order."""
+
+    unassigned = phrasebook(language)("(unassigned)")
+
+    def key(step: GuideStep) -> tuple[str, str, bool]:
+        if isinstance(step, PartStep):
+            return "fit", step.footprint_name, step.mirrored
+        # Unassigned conductors have no common net to build.
+        return "wire", step.net_name if step.net_name != unassigned else step.conductor_id, False
+
+    return tuple(tuple(group) for _, group in groupby(phase.steps, key))
+
+
+def step_groups_by_face(group: tuple[GuideStep, ...]) -> tuple[tuple[bool, tuple[GuideStep, ...]], ...]:
+    """A net may need a separate picture on each face."""
+    faces: dict[bool, list[GuideStep]] = {}
+    for step in group:
+        bottom = step.mirrored if isinstance(step, PartStep) else step.side == "bottom"
+        faces.setdefault(bottom, []).append(step)
+    return tuple((bottom, tuple(steps)) for bottom, steps in faces.items())
+
+
 def step_focus(step: GuideStep) -> str:
     """What one step is ABOUT: a component id or a conductor id.
 
@@ -3082,6 +3160,6 @@ def document_at_step(doc: PerfDocument, guide: Guide, step_index: int) -> PerfDo
     return dataclasses.replace(
         doc,
         components=tuple(c for c in doc.components if c.id in fitted),
-        conductors=tuple(c for c in doc.conductors if c.id in laid),
+        conductors=tuple(c for c in doc.conductors if c.kind == "strip" or c.id in laid),
     )
 

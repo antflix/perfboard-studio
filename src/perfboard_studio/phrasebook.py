@@ -309,12 +309,6 @@ TURKISH: dict[str, str] = {
         "kontrol · Perfboard Studio {version}"
     ),
     "A solderless breadboard, {points} points": "Lehimsiz bir breadboard, {points} nokta",
-    "Solid-core hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in total. "
-    "Not stranded: a stranded end frays in the clip instead of going in.": (
-        "Tek telli (solid) bağlantı teli, AWG {gauges}, renkler: {colours} — toplam "
-        "yaklaşık {metres:.2f} m. Çok telli değil: çok telli bir uç klibe girmek yerine "
-        "dağılır."
-    ),
     "Across the groove, pin 1 in {hole}. Line both rows of legs up over their holes and "
     "press the body down evenly, so that no leg folds under it.": (
         "Oluğun üstünden, 1. pin {hole} deliğinde. İki sıra bacağı da deliklerinin üstüne "
@@ -820,17 +814,6 @@ TURKISH: dict[str, str] = {
     "A multimeter with a continuity buzzer (every checkpoint below uses it)": (
         "Süreklilik buzzer'ı olan bir multimetre (aşağıdaki her kontrol noktası onu kullanır)"
     ),
-    "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m in total": (
-        "Bağlantı teli, AWG {gauges}, renkler: {colours} — toplam yaklaşık {metres:.2f} m"
-    ),
-    "Hookup wire, AWG {gauges} in {colours} — about {metres:.2f} m, plus the wires to the "
-    "parts off the board, cut to fit": (
-        "Bağlantı teli, AWG {gauges}, renkler: {colours} — yaklaşık {metres:.2f} m, artı "
-        "kart dışındaki parçaların telleri, ölçüye göre kesilir"
-    ),
-    "Bare tinned copper wire, AWG {gauges} — about {metres:.2f} m in total": (
-        "Çıplak kalaylı bakır tel, AWG {gauges} — toplam yaklaşık {metres:.2f} m"
-    ),
     "Wire strippers": "Tel sıyırıcı",
     "For the chips on adapters: the adapter boards, {pins} male header pins (2.54 mm), and a "
     "magnifier to check the chips' legs for bridges": (
@@ -933,6 +916,70 @@ TURKISH: dict[str, str] = {
         "{steps} adım, {checks} kontrol · Perfboard Studio {version}"
     ),
     "Phase {number}": "Aşama {number}",
+    'Build the board': 'Kartı monte et',
+    'Completed': 'Tamamlandı',
+    'Select': 'Seç',
+    'All assembly actions completed.': 'Tüm montaj işlemleri tamamlandı.',
+    'Follow the list from top to bottom. Lower crossing wires come first. Select a row to spotlight it; completed work moves to the bottom.': 'Listeyi yukarıdan aşağıya takip edin. Kesişen tellerden altta olan önce takılır. Vurgulamak için bir satır seçin; tamamlanan işler listenin altına taşınır.',
+    "Front": "Ön",
+    "Back": "Arka",
+    "Build notes": "Montaj notları",
+    "Strip {length} at each end.": "Her uçtan {length} soyun.",
+    "Only this step": "Yalnızca bu adım",
+    "Finished board": "Tamamlanmış kart",
+    ", strip {length} at each end": ", her iki uçtan {length} soyun",
+    "Bend the leads to {length}.": "Bacakları {length} aralığına bükün.",
+    "Cut {length} of {colour} AWG {awg}{strip}.": "{length} uzunluğunda {colour} AWG {awg} tel kesin{strip}.",
+    "Reinforcing wire: {length} of {gauge:g} mm {material}.": (
+        "Takviye teli: {length} uzunluğunda {gauge:g} mm {material}."
+    ),
+    "{length:g} holes": "{length:g} delik",
+    "{length} · {colour} · AWG {awg}": "{length} · {colour} · AWG {awg}",
+    "Bare tinned copper wire, AWG {gauges} — about {holes:.0f} holes in total": (
+        "Çıplak kalaylı bakır tel, AWG {gauges} — toplam yaklaşık {holes:.0f} delik aralığı"
+    ),
+    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in total": (
+        "{colours} renklerinde AWG {gauges} bağlantı teli — toplam yaklaşık {holes:.0f} delik "
+        "aralığı"
+    ),
+    "Hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes, plus the wires"
+    " to the parts off the board, cut to fit": (
+        "{colours} renklerinde AWG {gauges} bağlantı teli — yaklaşık {holes:.0f} delik aralığı ve"
+        " kart dışındaki parçalar için ölçüye göre kesilen teller"
+    ),
+    "Solid-core hookup wire, AWG {gauges} in {colours} — about {holes:.0f} holes in "
+    "total. Not stranded: a stranded end frays in the clip instead of going in.": (
+        "{colours} renklerinde AWG {gauges} tek damarlı bağlantı teli — toplam yaklaşık "
+        "{holes:.0f} delik aralığı. Çok telli uçlar klipse girmek yerine dağılır."
+    ),
+    "Print these pages at 100 % — actual size, not fit to page — and hold the bar below "
+    "against a ruler: if it is not {ruler} mm, the printer has scaled them. Count holes "
+    "inclusively, including both ends of each segment. Adjacent holes measure 2 holes; L "
+    "through O measures 4 holes. Shared bends belong to both neighboring segments, so use the"
+    " stated total cut length instead of adding the segment labels. The solid blue marks show"
+    " where the wire enters the board and the insulation ends. The dashed blue marks show "
+    "bends along the board. Copper-colored ends are bare wire.": (
+        "Bu sayfaları %100 gerçek boyutta yazdırın. Cetvel {ruler} mm olmalıdır. Her parçada iki "
+        "uçtaki delikleri de sayın. Komşu delikler 2 delik, L ile O arası 4 delik sayılır. Ortak "
+        "büküm delikleri iki parçada da sayıldığından etiketleri toplamak yerine toplam kesim "
+        "boyunu kullanın. Düz mavi işarette tel karta girer ve izolasyon biter. Kesikli mavi "
+        "işaretler kart üzerindeki dönüşlerdir. Bakır renkli uçlar çıplaktır."
+    ),
+    "Zoom board": "Kartı büyüt",
+    "Pin 1 · {hole}": "Pin 1 · {hole}",
+    "Bend {number} · {hole}": "Büküm {number} · {hole}",
+    "Copper side · A1 at upper right": "Bakır yüz · A1 sağ üstte",
+    "Component side · A1 at upper left": "Bileşen yüzü · A1 sol üstte",
+    "Done": "Tamam",
+    "Mark cut {cut} done": "{cut} kesimini tamamlandı olarak işaretle",
+    "Spotlight cuts by strip": "Şeride göre kesimleri vurgula",
+    "All strips": "Tüm şeritler",
+    "Wire net {net}": "{net} ağını bağlayın",
+    "Fit {parts}": "{parts} parçalarını takın",
+    "Copper side": "Bakır yüz",
+    "Component side": "Bileşen yüzü",
+    "Copper side · A1 at upper right · red marks show cuts":
+        "Bakır yüz · A1 sağ üstte · kırmızı işaretler kesimleri gösterir",
     "Check before moving on": "Devam etmeden önce kontrol edin",
     " of ": " / ",
     " done": " tamam",
@@ -971,20 +1018,10 @@ TURKISH: dict[str, str] = {
         "işaretlenirse geri kalan her şey de yanlış olur."
     ),
     "{footprint} · pins {holes}": "{footprint} · pinler {holes}",
-    "Bend the leads to {pitch:.2f} mm ({holes:.0f} holes).": (
-        "Bacakları {pitch:.2f} mm'ye bükün ({holes:.0f} delik)."
-    ),
     "{pads} pads": "{pads} ped",
     "about {milliohm:.1f} mΩ": "yaklaşık {milliohm:.1f} mΩ",
     "{drop:.0f} mV drop": "{drop:.0f} mV düşüm",
     "Path: {holes}": "Yol: {holes}",
-    ", strip {strip:.0f} mm at each end": ", iki ucundan {strip:.0f} mm soyun",
-    "Cut {length:.0f} mm of {colour} AWG {awg}{strip}.": (
-        "{length:.0f} mm {colour} AWG {awg} tel kesin{strip}."
-    ),
-    "Reinforcing wire: {length:.0f} mm of {gauge:g} mm {material}.": (
-        "Takviye teli: {length:.0f} mm, {gauge:g} mm {material}."
-    ),
     "Probe {holes}": "Ölçüm noktaları: {holes}",
     "Do not apply power until this passes.": "Bu geçmeden enerji vermeyin.",
     "Expect: {expected}": "Beklenen: {expected}",
@@ -1012,21 +1049,6 @@ TURKISH: dict[str, str] = {
     "{gauge:g} mm, laid along {pads} pads": "{gauge:g} mm, {pads} ped boyunca",
     # The 1:1 wire templates at the end of the guide.
     "Wire templates (1:1)": "Tel şablonları (1:1)",
-    "Print these pages at 100 % — actual size, not fit to page — and hold the bar "
-    "below against a ruler: if it is not {ruler} mm, the printer has scaled them. "
-    "Cut each wire to the length of its straight drawing and mark it there: a dark "
-    "mark is where the insulation is cut, a solid blue one where the wire goes down "
-    "through the board, a dashed one where it turns along it. Then bend it to the "
-    "shape beside, drawn as seen from the face the wire lies on.": (
-        "Bu sayfaları %100 ölçekte yazdırın — gerçek boyutta, sayfaya sığdırmadan — ve "
-        "aşağıdaki çubuğu bir cetvelle karşılaştırın: {ruler} mm değilse yazıcı ölçeği "
-        "değiştirmiştir. Her teli düz çizimindeki boya kesin ve işaretlerini oradan alın: "
-        "koyu işaret izolasyonun kesileceği yer, düz mavi işaret telin kartın içinden "
-        "aşağı geçtiği yer, kesikli mavi işaret kartın üzerinde döndüğü yer. Sonra "
-        "yanındaki şekle göre bükün; şekil, telin durduğu yüzden bakılmış hâliyle "
-        "çizilmiştir."
-    ),
-    "{length:.0f} mm · {colour} · AWG {awg}": "{length:.0f} mm · {colour} · AWG {awg}",
     "from the component side": "parça yüzünden bakış",
     "from the solder side": "lehim yüzünden bakış",
     "turned to fit the page": "sayfaya sığsın diye döndürüldü",

@@ -751,10 +751,11 @@ class HoleRulerItem(QGraphicsItem):
     every fifth stays bright -- the same reading aid as a ruler's long and short marks.
     """
 
-    def __init__(self, board: Board, side: BoardSide) -> None:
+    def __init__(self, board: Board, side: BoardSide, *, label_px: int = RULER_LABEL_PX) -> None:
         super().__init__()
         self.board = board
         self.side = side
+        self.label_px = label_px
         self.setZValue(80)
 
     def boundingRect(self) -> QRectF:
@@ -794,7 +795,7 @@ class HoleRulerItem(QGraphicsItem):
                 painter,
                 QPointF(x, _outline_rect(board).top() - 1.4),
                 column_label(col),
-                RULER_LABEL_PX,
+                self.label_px,
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
                 bold=major,
             )
@@ -808,7 +809,7 @@ class HoleRulerItem(QGraphicsItem):
                 painter,
                 QPointF(_outline_rect(board).left() - 1.2, row * board.pitch),
                 row_label(row),
-                RULER_LABEL_PX,
+                self.label_px,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 bold=major,
             )
@@ -2291,6 +2292,16 @@ class ConductorItem(QGraphicsItem):
             painter.drawEllipse(point, radius, radius)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        if self.conductor.kind == "strip" and self.is_far_side():
+            # Factory copper is hidden by the board; its front-side cell is white ink.
+            points = self._points()
+            xs, ys = [p.x() for p in points], [p.y() for p in points]
+            margin = self.board.pitch * .46
+            painter.setPen(QPen(SELECTED if self.isSelected() or self.net_lit else QColor("#f1f3f5"), .09))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRectF(min(xs)-margin, min(ys)-margin,
+                                   max(xs)-min(xs)+2*margin, max(ys)-min(ys)+2*margin))
+            return
         # Copper on the far face, quieter on screen (FAR_SIDE_OPACITY) -- but never what is
         # selected or lit, which is being looked for, and never on paper.
         if (
@@ -3640,6 +3651,7 @@ class ComponentItem(QGraphicsItem):
         self.fp = fp
         self.board = board
         self.side = side
+        self.mount_side: BoardSide = "top"
         #: Pin number -> the colour of the wire leaving that pad, for a part off the board:
         #: its net's, by the cut list's convention (``insulation_color``).
         self.lead_colours = lead_colours or {}
@@ -4092,7 +4104,8 @@ class ComponentItem(QGraphicsItem):
         # occupied, with none of the component-side detail -- no cathode band, no pin-1
         # notch, no tab -- that would make it read as a part you are looking at.
         off_board = self.fp.body.archetype == "flying-leads"
-        if self.side == "bottom" and not off_board:
+        visible_body = self.side == self.mount_side
+        if not visible_body and not off_board:
             painter.save()
             self._apply_local_transform(painter)
             _paint_body_shadow(painter, self.fp, placement, self.isSelected())
@@ -4102,7 +4115,7 @@ class ComponentItem(QGraphicsItem):
         # not (``topview``'s parametric shapes stay a fallback for the data, not for this).
         view = top_view(self.fp, self.board.pitch)
         measured = view.source != "parametric"
-        if self.side == "top":
+        if visible_body:
             # Leads, in item coordinates: a line does not care which way its frame is turned,
             # and the endpoints already come from the shared transform. A measured view has
             # its leads in it, as metal, where the mesh has them.

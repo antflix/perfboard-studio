@@ -348,3 +348,19 @@ def test_a_modules_pads_lie_on_its_board() -> None:
         x0, x1, y0, y1, z0, z1 = source.GetOutput().GetBounds()
         assert z1 - z0 < 0.1, "lying flat"
         assert x1 - x0 == pytest.approx(y1 - y0, rel=0.05), "round from above"
+
+
+def test_custom_factory_strip_is_gold_on_back_and_white_print_on_front() -> None:
+    from perfboard_studio.model import HoleCoord, StripConductor
+    from perfboard_studio.ui import view3d
+
+    strip = StripConductor(id="factory", path=tuple(HoleCoord(i,1) for i in range(3)))
+    copper, ink = view3d.build_conductor(strip, DEFAULT_BOARD)
+    for actor in (copper, ink):
+        actor.GetMapper().Update()
+    assert copper.GetBounds()[5] < -DEFAULT_BOARD.thickness
+    assert ink.GetBounds()[4] > 0
+    assert copper.GetProperty().GetColor() == pytest.approx(
+        view3d.build_pads(DEFAULT_BOARD, "bottom").GetProperty().GetColor()
+    )
+    assert min(ink.GetProperty().GetColor()) > .85

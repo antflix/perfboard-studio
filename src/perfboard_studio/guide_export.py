@@ -34,16 +34,17 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import itertools
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from html import escape
 from typing import Any
 
 from .breadboard import has_breadboard_pattern, is_breadboard, is_solderable_breadboard
 from .drc import MATERIAL_LABELS
-from .geometry import board_size_mm, format_hole, holeless_positions
+from .geometry import board_size_mm, column_label, format_hole, holeless_positions, row_label
 from .guide import (
     JSON_OMITTED_AT_DEFAULT,
     TEMPLATE_MARGIN_MM,
@@ -51,17 +52,18 @@ from .guide import (
     Checkpoint,
     ConductorStep,
     Guide,
-    GuideStep,
     LeadCut,
     PartStep,
     WireCut,
     WireMarkKind,
     WireTemplate,
     all_steps,
+    assembly_phases,
     conductor_word,
     is_guide_gap,
     lead_end,
     step_focus,
+    step_groups,
     wire_template,
 )
 from .harness import HarnessEnd
@@ -243,9 +245,14 @@ def cut_list_to_csv(guide: Guide) -> str:
     return out.getvalue()
 
 
+def _hole_length(length_mm: float, board: Board | None, say: Phrasebook) -> str:
+    pitch = board.pitch if board is not None else 2.54
+    return say("{length:g} holes", length=round(length_mm / pitch + 1, 2))
+
+
 def _html_lead_row(lead: LeadCut, say: Phrasebook, *, board: Board | None) -> str:
     """A wire to a part off the board, in the cut list's table: one hole, and the lug."""
-    cut = say("cut to fit") if lead.cut_mm is None else f"{lead.cut_mm:.0f} mm"
+    cut = say("cut to fit") if lead.cut_mm is None else _hole_length(lead.cut_mm, board, say)
     return (
         f"<tr><td>{say('wire off the board')}</td><td>{escape(lead.net_name)}</td>"
         f"<td>{_hole(lead.hole, board=board)}</td>"
@@ -314,6 +321,18 @@ p  { margin: .4rem 0; }
 a  { color: var(--accent); }
 .sub { color: var(--dim); }
 .phase { border-top: 2px solid var(--line); padding-top: .5rem; margin-top: 2rem; }
+.work-group { margin: 1.3rem 0; }
+.work-group h3 { color: var(--text); text-transform: none; letter-spacing: normal; }
+.work-group figure { margin: .6rem 0; }
+.picture-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .4rem 0; }
+.picture-tools button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.picture-tools select { max-width: 100%; font: inherit; color: var(--text); background: var(--panel-2); }
+.shot-scroll { overflow: auto; }
+.shot-scroll.zoomed .shot { width: max(100%, 80rem); }
+.cut-map .muted { opacity: .18; }
+tr[data-cut-strip].done { color: var(--dim); }
+.work-group figcaption { color: var(--dim); font-size: .875rem; }
+.work-group .shot, .cut-map { display: block; width: 100%; max-width: none; }
 .phase-num { color: var(--accent); font-variant-numeric: tabular-nums; }
 .step, .check {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -365,7 +384,10 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
     --text: #000; --dim: #444; --accent: #10305c; --ok: #14562f;
     --warn: #6b4300; --error: #8c1616; --trace: #6b4b00;
   }
-  .progress, input[type=checkbox] { display: none; }
+  .progress, input[type=checkbox], .picture-tools { display: none; }
+  .shot-scroll.zoomed .shot { width: 100%; }
+  .cut-map .muted { opacity: 1; }
+  tr[data-cut-strip][hidden] { display: table-row; }
   body { background: #fff; color: #000; }
   .step, .check { break-inside: avoid; }
   .shot { break-inside: avoid; max-width: 20rem; }
@@ -373,6 +395,58 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
   .tpl-preview { display: none; }
   .templates { break-before: page; }
 }
+
+summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
+summary h2 { display: inline; }
+.checks { margin: .5rem 0; }
+.assembly-viewer { margin: .5rem 0; }
+.assembly-viewer .shot { max-width: none; width: 100%; max-height: 48vh; object-fit: contain; }
+.assembly-viewer .shot-scroll.zoomed .shot { max-height: none; width: max(100%, 80rem); }
+.assembly-viewer figcaption { color: var(--accent); font-weight: 600; }
+.assembly .step { flex-wrap: wrap; }
+.assembly .tag { display: none; }
+.wire-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; }
+.wire-controls label { display: flex; gap: .3rem; align-items: center; cursor: pointer; }
+.wire-controls input { margin: 0; }
+[data-select-step][aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+[data-active-row] .step { border-color: var(--accent); }
+.queue-context { display: none; font-size: .75rem; }
+.assembly .step .note { display: none; }
+[data-active-row] .step .note, [data-active-row] .queue-context { display: block; }
+.active-template { margin: .5rem 0 1rem; }
+[hidden] { display: none !important; }
+@media (max-width: 40rem) {
+  .assembly .body { flex-basis: 100%; }
+  .assembly-viewer .shot { max-height: 42vh; }
+}
+@media print {
+  .wire-controls, .active-template, .assembly [data-wire-card="true"] .tpl-pair { display: none; }
+  .assembly-viewer .shot { max-height: none; }
+  .completed-list .done { opacity: 1; }
+  .assembly .step .note { display: block; }
+}
+
+
+[data-pending-list], [data-completed-list] {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: .7rem;
+}
+.assembly .work-group { display: contents; }
+.assembly .work-group[data-single="true"] > h3 { display: none; }
+.assembly .work-group > h3 { grid-column: 1 / -1; margin: .5rem 0 0; }
+.assembly .step { margin: 0; }
+.assembly [data-wire-card="true"] { display: flex; flex-direction: column; gap: .4rem; }
+.assembly [data-wire-card="true"] .body { width: 100%; }
+.assembly [data-wire-card="true"] .title { font-size: 1rem; }
+.assembly [data-wire-card="true"] .tpl-pair { flex-direction: column; gap: .35rem; margin-top: .4rem; }
+@media screen { .assembly [data-wire-card="true"] svg { max-width: 100%; height: auto; } }
+@media screen { .assembly [data-wire-card="true"] svg:first-child { max-height: 7rem; } }
+@media screen { .assembly [data-wire-card="true"] svg:last-child { max-height: 5rem; } }
+.assembly [data-wire-card="true"] .wire-controls { margin-top: auto; }
+.wire-notes { font-size: .8rem; color: var(--dim); }
+.wire-notes summary { font-weight: normal; padding: .15rem 0; }
+[data-active-row] { max-width: 19rem; margin: .5rem 0 1rem; }
+[data-active-row] [data-wire-card="true"] .queue-context { display: none; }
+
 /* Wire templates. Drawn on white whatever the theme, as the paper they stand for. */
 .tpl-preview { margin: .5rem 0 .1rem; }
 .tpl-pair { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; align-items: flex-start; }
@@ -400,17 +474,19 @@ _SCRIPT = """
   function paint() {
     var n = 0;
     boxes.forEach(function (box) {
-      box.closest('.step, .check').classList.toggle('done', box.checked);
+      box.closest('.step, .check, tr').classList.toggle('done', box.checked);
       if (box.checked) n++;
     });
     if (fill) fill.style.width = (boxes.length ? (n / boxes.length) * 100 : 0) + '%';
     if (count) count.textContent = n + '__OF__' + boxes.length + '__DONE__';
+    refreshQueue();
   }
 
   boxes.forEach(function (box) {
     box.checked = !!done[box.id];
     box.addEventListener('change', function () {
       done[box.id] = box.checked;
+      if (box.checked && box.closest('[data-queue-row]') === selected) selected = null;
       try { localStorage.setItem(key, JSON.stringify(done)); } catch (e) {}
       paint();
     });
@@ -419,9 +495,104 @@ _SCRIPT = """
   var reset = document.querySelector('.reset');
   if (reset) reset.addEventListener('click', function () {
     done = {};
+    selected = null;
     try { localStorage.removeItem(key); } catch (e) {}
     boxes.forEach(function (box) { box.checked = false; });
     paint();
+  });
+
+  var queue = document.querySelector('.assembly');
+  var queueRows = Array.prototype.slice.call(document.querySelectorAll('[data-queue-row]'));
+  var selected = null;
+  var viewMode = null;
+
+  function showWire() {
+    if (!queue || !selected) return;
+    var image = queue.querySelector('.shot');
+    var target = viewMode === 'finished' ? 'finished-' + selected.dataset.face
+      : selected.dataset.target + (viewMode === 'only' ? '-only' : '');
+    var source = document.getElementById(target);
+    var shot = source && source.content.querySelector('img');
+    if (image) {
+      image.hidden = !shot;
+      if (shot) { image.src = shot.src; image.alt = shot.alt; }
+    }
+    queue.querySelector('[data-active-caption]').textContent = selected.dataset.context;
+    queue.querySelectorAll('[data-guide-view]').forEach(function (button) {
+      var id = button.dataset.guideView === 'only' ? selected.dataset.target + '-only'
+        : 'finished-' + selected.dataset.face;
+      button.disabled = !document.getElementById(id);
+      button.setAttribute('aria-pressed', button.dataset.guideView === viewMode);
+    });
+    queueRows.forEach(function (row) {
+      row.querySelector('[data-select-step]').setAttribute('aria-pressed', row === selected);
+    });
+  }
+
+  function refreshQueue() {
+    if (!queue) return;
+    var pending = queueRows.filter(function (row) { return !row.querySelector('input').checked; });
+    if (!selected) selected = pending[0] || null;
+    queueRows.forEach(function (row) {
+      var parent = row === selected ? queue.querySelector('[data-active-row]')
+        : row.querySelector('input').checked ? queue.querySelector('[data-completed-list]')
+        : document.getElementById(row.dataset.group);
+      parent.appendChild(row);
+    });
+    queue.querySelectorAll('.work-group').forEach(function (group) {
+      group.hidden = !group.querySelector('[data-queue-row]');
+    });
+    queue.querySelector('.completed-list').hidden = !queue.querySelector('[data-completed-list] [data-queue-row]');
+    if (selected) showWire();
+    else {
+      queue.querySelector('[data-active-caption]').textContent = '__COMPLETE__';
+    }
+  }
+
+  queueRows.forEach(function (row) {
+    row.querySelector('[data-select-step]').addEventListener('click', function () {
+      selected = row;
+      refreshQueue();
+      queue.scrollIntoView({block: 'start'});
+    });
+  });
+  if (queue) queue.querySelectorAll('[data-guide-view]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      viewMode = viewMode === button.dataset.guideView ? null : button.dataset.guideView;
+      showWire();
+    });
+  });
+
+  document.querySelectorAll('.wire-notes a').forEach(function (link) {
+    link.addEventListener('click', function () {
+      var target = document.getElementById(link.getAttribute('href').slice(1));
+      if (target) target.querySelector('details').open = true;
+    });
+  });
+
+  var printDetails = [];
+  window.addEventListener('beforeprint', function () {
+    printDetails = Array.prototype.slice.call(document.querySelectorAll('details:not([open])'));
+    printDetails.forEach(function (detail) { detail.open = true; });
+  });
+  window.addEventListener('afterprint', function () {
+    printDetails.forEach(function (detail) { detail.open = false; });
+  });
+
+  document.querySelectorAll('[data-guide-zoom]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var viewport = button.closest('figure').querySelector('.shot-scroll');
+      button.setAttribute('aria-pressed', viewport.classList.toggle('zoomed'));
+    });
+  });
+
+  var cutFilter = document.querySelector('[data-cut-filter]');
+  if (cutFilter) cutFilter.addEventListener('change', function () {
+    document.querySelectorAll('[data-cut-strip]').forEach(function (item) {
+      var other = cutFilter.value && item.dataset.cutStrip !== cutFilter.value;
+      if (item.tagName === 'TR') item.hidden = !!other;
+      else item.classList.toggle('muted', !!other);
+    });
   });
 
   paint();
@@ -435,12 +606,13 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     Deliberately not a framework. This file has to open from a USB stick on a phone in
     five years' time, which rules out every dependency that could stop existing.
 
-    ``step_images`` are the illustrations PLAN.md §7.2 asks for, keyed by
-    ``guide.step_focus(step)``. **Raw image bytes, not URLs or paths** — this function
-    base64s them into the document itself. That is the whole point: a caller cannot hand
+    ``step_images`` contains whole-board action views keyed by ``action:<id>``. Pass raw
+    image bytes. ``only:action:<id>`` and ``finished:<0 or 1>`` enable board view toggles.
+    Legacy views keyed by a step focus are also accepted.
+    This function base64s the images into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
-    beside it, or a phone's network. Rendering them needs VTK and a real board, which is
-    the host's job (``ui/view3d.render_offscreen``); this module has never known what a
+    beside it, or a phone's network. Rendering them needs a board and a Qt scene, which is
+    the host's job (``ui/guide_images.render_guide_images``); this module has never known what a
     board looks like and still does not — including what format its pictures are in,
     which ``_image_media_type`` reads off the bytes rather than agreeing in advance.
     """
@@ -507,25 +679,42 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     parts.append(_html_preparation(guide, say))
 
     images = step_images or {}
+    # Keep existing checkbox IDs even when the installation order changes.
     step_id = 0
+    ids = {}
+    check_ids = {}
     for phase in guide.phases:
-        if phase.is_empty or phase.number == 0:
+        if phase.number == 0:
             continue
-        parts.append(
-            '<section class="phase"><h2><span class="phase-num">'
-            + say("Phase {number}", number=phase.number)
-            + f"</span> — {escape(phase.title)}</h2>"
-            f'<p class="sub">{escape(phase.summary)}</p>'
-        )
         for step in phase.steps:
             step_id += 1
-            parts.append(_html_step(step, f"s{step_id}", images, say, guide.board))
+            ids[step_focus(step)] = f"s{step_id}"
+        for index, _ in enumerate(phase.checkpoints):
+            step_id += 1
+            check_ids[phase.number, index] = f"s{step_id}"
+    guide = replace(guide, phases=assembly_phases(guide))
+    parts.append(_html_assembly(guide, images, say, ids))
+    for phase in guide.phases:
+        if phase.number == 0 or phase.is_empty:
+            continue
+        parts.append(
+            f'<section class="phase phase-checks" id="phase-{phase.number}"><details class="checks"><summary><h2><span class="phase-num">'
+            + say("Phase {number}", number=phase.number)
+            + f'</span> — {escape(phase.title)}</h2></summary><p class="sub">{escape(phase.summary)}</p>'
+        )
         if phase.checkpoints:
-            parts.append("<h3>" + say("Check before moving on") + "</h3>")
-            for check in phase.checkpoints:
-                step_id += 1
-                parts.append(_html_check(check, f"s{step_id}", say, board=guide.board))
-        parts.append("</section>")
+            checks = "".join(
+                _html_check(check, check_ids[phase.number, index], say, board=guide.board)
+                for index, check in enumerate(phase.checkpoints)
+            )
+            parts.append(checks)
+        parts.append("</details></section>")
+
+    for face_index in (0, 1):
+        face = say("Copper side" if face_index else "Component side")
+        finished = _html_step_image(f"finished:{face_index}", images, f"{say('Finished board')} · {face}")
+        if finished:
+            parts.append(f'<template id="finished-{face_index}">{finished}</template>')
 
     if guide.harness:
         parts.append(
@@ -538,17 +727,19 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
             parts.extend(f"<li>{escape(text)}</li>" for text in cable.steps)
             parts.append("</ol>")
             if cable.checkpoints:
-                parts.append("<h3>" + say("Check before moving on") + "</h3>")
+                parts.append('<details class="checks"><summary>' + say("Check before moving on") + "</summary>")
                 for check in cable.checkpoints:
                     step_id += 1
                     parts.append(_html_check(check, f"s{step_id}", say, board=None))
+                parts.append("</details>")
         parts.append("</section>")
 
     parts.append(_html_tables(guide, say))
     parts.append(_html_templates(guide, say))
     # The counter's words go into the script as JavaScript string literals, which is why
     # a translation of them may hold no quote or backslash (tests/test_phrasebook.py).
-    script = _SCRIPT.replace("__OF__", say(" of ")).replace("__DONE__", say(" done"))
+    script = (_SCRIPT.replace("__OF__", say(" of ")).replace("__DONE__", say(" done"))
+              .replace("__COMPLETE__", say("All assembly actions completed.")))
     parts.append(
         '</main><div class="progress"><span class="count"></span>'
         '<span class="bar"><i></i></span>'
@@ -573,13 +764,31 @@ def _html_cuts(guide: Guide, say: Phrasebook) -> str:
     """
     if not guide.track_cuts:
         return ""
-    rows = "".join(
-        f"<tr><td>{_hole(cut.at, board=guide.board)}"
-        f"{(' – ' + _hole(cut.to, board=guide.board)) if cut.to is not None else ''}</td><td>{escape(cut.strip)}</td>"
-        f"<td>{_hole(cut.separates[0], board=guide.board)} ↔ {_hole(cut.separates[1], board=guide.board)}</td></tr>"
-        if cut.separates is not None
-        else f"<tr><td>{_hole(cut.at, board=guide.board)}</td><td>{escape(cut.strip)}</td><td>—</td></tr>"
-        for cut in guide.track_cuts
+    rows = []
+    for i, cut in enumerate(guide.track_cuts, 1):
+        location = _hole(cut.at, board=guide.board)
+        if cut.to is not None:
+            location += " – " + _hole(cut.to, board=guide.board)
+        probes = (
+            " ↔ ".join(_hole(at, board=guide.board) for at in cut.separates)
+            if cut.separates is not None else "—"
+        )
+        address = format_hole(cut.at, guide.board)
+        if cut.to is not None:
+            address += " – " + format_hole(cut.to, guide.board)
+        label = escape(say("Mark cut {cut} done", cut=address))
+        rows.append(
+            f'<tr data-cut-strip="{escape(cut.strip)}">'
+            f'<td><input type="checkbox" id="track-cut-{i}" aria-label="{label}"></td>'
+            f'<td>{location}</td><td>{escape(cut.strip)}</td><td>{probes}</td></tr>'
+        )
+    options = "".join(
+        f'<option value="{escape(strip)}">{escape(strip)}</option>'
+        for strip in dict.fromkeys(cut.strip for cut in guide.track_cuts)
+    )
+    cut_filter = (
+        f'<label class="picture-tools">{escape(say("Spotlight cuts by strip"))} '
+        f'<select data-cut-filter><option value="">{escape(say("All strips"))}</option>{options}</select></label>'
     )
     if any(cut.to is not None for cut in guide.track_cuts):
         instructions = say(
@@ -599,9 +808,44 @@ def _html_cuts(guide: Guide, say: Phrasebook) -> str:
     return (
         "<h3>" + say("Cut these tracks first") + "</h3><p>"
         + instructions
-        + '</p><div class="wrap"><table>'
-        f"<tr><th>{say('Hole')}</th><th>{say('Strip')}</th><th>{say('Separates')}</th></tr>"
-        f"{rows}</table></div>"
+        + "</p>" + cut_filter + _cut_map(guide, say) + '<div class="wrap"><table>'
+        f"<tr><th>{say('Done')}</th><th>{say('Hole')}</th><th>{say('Strip')}</th><th>{say('Separates')}</th></tr>"
+        f"{''.join(rows)}</table></div>"
+    )
+
+
+def _cut_map(guide: Guide, say: Phrasebook) -> str:
+    """Whole copper face, mirrored left to right from component-side addresses."""
+    cols, rows = guide.board.cols, guide.board.rows
+    holes = "".join(
+        f'<circle cx="{x}" cy="{y}" r=".16"/>'
+        for y in range(rows) for x in range(cols)
+    )
+    labels = "".join(
+        f'<text x="{x}" y="-.68">{column_label(cols - 1 - x)}</text>' for x in range(cols)
+    ) + "".join(
+        f'<text x="-.91" y="{y+.13}">{row_label(y)}</text>' for y in range(rows)
+    )
+    marks = []
+    for cut in guide.track_cuts:
+        end = cut.to or cut.at
+        x = cols - 1 - (cut.at.col + end.col) / 2
+        y = (cut.at.row + end.row) / 2
+        marks.append(
+            f'<path data-cut-strip="{escape(cut.strip)}" d="M{x-.23} {y-.23}l.46 .46m-.46 0l.46 -.46">'
+            f'<title>{escape(format_hole(cut.at, guide.board))}'
+            + (f' – {escape(format_hole(end, guide.board))}' if cut.to else "")
+            + '</title></path>'
+        )
+    caption = escape(say("Copper side · A1 at upper right · red marks show cuts"))
+    return (
+        f'<figure><svg class="cut-map" viewBox="-1.5 -1.4 {cols+1.5} {rows+1.4}" role="img" aria-label="{caption}">'
+        f'<rect x="-.5" y="-.5" width="{cols}" height="{rows}" fill="#25443b"/>'
+        f'<g fill="currentColor" text-anchor="middle" font-size=".38">{labels}</g>'
+        f'<g fill="#cab17c">{holes}</g>'
+        f'<g stroke="#ff665f" stroke-width=".15" stroke-linecap="round">{"".join(marks)}</g>'
+        f'<circle cx="{cols-1}" cy="0" r=".29" fill="none" stroke="white" stroke-width=".07"/>'
+        f'</svg><figcaption>{caption}</figcaption></figure>'
     )
 
 
@@ -638,7 +882,7 @@ def _html_preparation(guide: Guide, say: Phrasebook) -> str:
             size=_board_mm(guide),
             a1='<span class="hole">A1</span>',
         ))
-        + f"</p>{_html_cuts(guide, say)}{checks}</section>"
+        + f"</p>{_html_cuts(guide, say)}{_html_checks(checks, say)}</section>"
     )
 
 
@@ -675,15 +919,6 @@ def _html_breadboard(guide: Guide, say: Phrasebook) -> str:
     )
 
 
-def _html_step(
-    step: GuideStep, dom_id: str, images: Mapping[str, bytes], say: Phrasebook, board: Board
-) -> str:
-    picture = _html_step_image(step, images)
-    if isinstance(step, PartStep):
-        return _html_part_step(step, dom_id, picture, say, board=board)
-    return _html_conductor_step(step, dom_id, picture, say, wire_template(step, board), board=board)
-
-
 #: Magic bytes to media type, longest signature first. A data URI carries its own type,
 #: so the one thing this must never do is guess: a JPEG announced as ``image/png`` is a
 #: broken picture in the one place there is no network to re-fetch it from.
@@ -711,19 +946,118 @@ def _image_media_type(data: bytes) -> str:
     return "application/octet-stream"
 
 
-def _html_step_image(step: GuideStep, images: Mapping[str, bytes]) -> str:
-    """The board as it stands at this step, with this step's own part picked out.
+def _html_checks(checks: str, say: Phrasebook) -> str:
+    return (
+        '<details class="checks"><summary>' + say("Check before moving on")
+        + f"</summary>{checks}</details>"
+    ) if checks else ""
 
-    Inlined as a data URI. The alt text is the step's title rather than "step image":
-    printed, or read aloud, or opened where the picture will not load, the sentence that
-    survives has to be the one that says what to do.
-    """
-    picture = images.get(step_focus(step))
+
+def _html_wire_card(step: ConductorStep, dom_id: str, say: Phrasebook, board: Board) -> str:
+    length = step.cut.cut_mm if step.cut else step.length_mm
+    colour = step.cut.colour if step.cut else "grey"
+    face = say("Front" if step.side == "top" else "Back")
+    title = (f'{escape(step.net_name)}: {_hole(step.path[0], board=board)} → '
+             f'{_hole(step.path[-1], board=board)}')
+    template = wire_template(step, board)
+    drawing = _template_pair(template, step, step.cut, board=board) if template and step.cut else ""
+    notes = [escape(note) for note in step.notes]
+    if step.cut and step.cut.strip_mm:
+        notes.insert(0, say("Strip {length} at each end.", length=_hole_length(step.cut.strip_mm, board, say)))
+    if step.spine:
+        notes.insert(0, say(
+            "Reinforcing wire: {length} of {gauge:g} mm {material}.",
+            length=_hole_length(step.spine.length_mm, board, say), gauge=step.spine.gauge_mm,
+            material=escape(say(step.spine.material)),
+        ))
+    notes.extend(f'<span class="risk">{escape(risk.message)}</span>' for risk in step.risks)
+    details = ('<details class="wire-notes"><summary>' + say("Build notes") + '</summary>'
+               + ''.join(f'<p>{note}</p>' for note in notes) + '</details>') if notes else ""
+    return (
+        f'<label class="step" for="{dom_id}"><input type="checkbox" id="{dom_id}">'
+        f'<span class="body"><div class="title">{title}</div><div class="meta">'
+        f'{escape(_hole_length(length, board, say))} · {escape(say(colour))} · {face}</div>'
+        f'{drawing}{details}</span></label>'
+    )
+
+
+def _html_assembly(
+    guide: Guide, images: Mapping[str, bytes], say: Phrasebook, ids: Mapping[str, str],
+) -> str:
+    rows: list[str] = []
+    pictures: list[str] = []
+    first_picture = ""
+    for phase in guide.phases:
+        for group in step_groups(phase, language=guide.language):
+            first = group[0]
+            title = (say("Wire net {net}", net=first.net_name) if isinstance(first, ConductorStep)
+                     else say("Fit {parts}", parts=", ".join(step.ref for step in group if isinstance(step, PartStep))))
+            group_id = f"work-{len(rows)}"
+            context = f"{say('Phase {number}', number=phase.number)} · {phase.title} · {title}"
+            rows.append(f'<section class="work-group" id="{group_id}" data-single="{str(len(group) == 1).lower()}"><h3>{escape(title)}</h3>')
+            for step in group:
+                key = step_focus(step)
+                dom_id = ids[key]
+                bottom = step.side == "bottom" if isinstance(step, ConductorStep) else step.mirrored
+                face = say("Copper side" if bottom else "Component side")
+                target = f"spot-{dom_id}"
+                instruction = say("Fit {parts}", parts=step.title) if isinstance(step, PartStep) else step.title
+                for suffix, image_key in (("", f"action:{key}"), ("-only", f"only:action:{key}")):
+                    picture = _html_step_image(image_key, images, f"{instruction} · {face}")
+                    if not picture:
+                        picture = _html_step_image(("only:" if suffix else "") + key, images, f"{instruction} · {face}")
+                    if picture:
+                        pictures.append(f'<template id="{target}{suffix}">{picture}</template>')
+                        if not first_picture and not suffix:
+                            first_picture = picture
+                card = (_html_part_step(step, dom_id, say=say, board=guide.board)
+                        if isinstance(step, PartStep) else
+                        _html_wire_card(step, dom_id, say, guide.board))
+                # A row has explicit controls, so clicking its text must not tick it off.
+                card = card.replace(f'<label class="step" for="{dom_id}">',
+                    f'<div class="step" data-queue-row data-group="{group_id}" '
+                    f'data-target="{target}" data-face="{int(bottom)}" data-wire-card="{str(isinstance(step, ConductorStep)).lower()}" data-context="{escape(context)}">', 1)
+                card = card.removesuffix("</label>") + "</div>"
+                card = card.replace(f'<input type="checkbox" id="{dom_id}">', "", 1)
+                controls = (f'<div class="wire-controls"><button type="button" data-select-step '
+                            f'aria-pressed="false">{say("Select")}</button>'
+                            f'<label><input type="checkbox" id="{dom_id}"> {say("Completed")}</label></div>')
+                if isinstance(step, PartStep):
+                    card = card.replace('<span class="body">', '<span class="body">' +
+                                        f'<div class="meta queue-context">{escape(context)} · {escape(face)}</div>', 1)
+                else:
+                    link = f'<a href="#phase-{phase.number}">{say("Check before moving on")}</a>'
+                    card = card.replace('</details>', link + '</details>', 1)
+                card = card.removesuffix("</div>") + controls + "</div>"
+                rows.append(card)
+            rows.append("</section>")
+    if not rows:
+        return ""
+    buttons = ''.join(
+        f'<button type="button" data-guide-view="{mode}" aria-pressed="false">{escape(label)}</button>'
+        for mode, label in (("only", say("Only this step")), ("finished", say("Finished board")))
+    ) if first_picture else ""
+    return (
+        '<section class="phase assembly" id="assembly"><h2>' + say("Build the board") + '</h2><p class="sub">'
+        + say("Follow the list from top to bottom. Lower crossing wires come first. Select a row to spotlight it; completed work moves to the bottom.")
+        + '</p><figure class="assembly-viewer"><figcaption data-active-caption></figcaption>'
+        + f'<div class="shot-scroll">{first_picture}</div><div class="picture-tools">{buttons}'
+        + (f'<button type="button" data-guide-zoom aria-pressed="false">{say("Zoom board")}</button>' if first_picture else "")
+        + '</div></figure><div data-active-row></div>'
+        + f'<div data-pending-list>{"".join(rows)}</div><details class="completed-list"><summary>'
+        + say("Completed") + '</summary><div data-completed-list></div></details>'
+        + ''.join(pictures) + '</section>'
+    )
+
+
+def _html_step_image(key: str, images: Mapping[str, bytes], title: str) -> str:
+    """Inline a whole-board picture for a group or an individual action."""
+    picture = images.get(key)
     if not picture:
         return ""
     encoded = base64.b64encode(picture).decode("ascii")
     return (
-        f'<img class="shot" alt="{escape(step.title)}" '
+        f'<img class="shot" alt="{escape(title)}" '
         f'src="data:{_image_media_type(picture)};base64,{encoded}">'
     )
 
@@ -748,9 +1082,8 @@ def _html_part_step(
         bits.append(
             '<div class="note">'
             + say(
-                "Bend the leads to {pitch:.2f} mm ({holes:.0f} holes).",
-                pitch=step.bend_template_mm,
-                holes=step.bend_template_mm / 2.54,
+                "Bend the leads to {length}.",
+                length=_hole_length(step.bend_template_mm, board, say),
             )
             + "</div>"
         )
@@ -785,7 +1118,7 @@ def _html_conductor_step(
         if step.path
         else f'<div class="title">{escape(step.title)}</div>',
         f'<div class="meta">{escape(_conductor_word(step, say))} · '
-        f"{step.length_mm:.1f} mm"
+        + escape(_hole_length(step.length_mm, board, say))
         + (" · " + say("{pads} pads", pads=step.pads) if step.pads > 2 else "")
         + (
             " · " + say("about {milliohm:.1f} mΩ", milliohm=step.resistance_ohm * 1000)
@@ -811,15 +1144,15 @@ def _html_conductor_step(
         # Bare wire has nothing to strip, and "strip 0 mm at each end" is an instruction
         # to do nothing -- so the clause is left out rather than printed as a zero.
         strip = (
-            say(", strip {strip:.0f} mm at each end", strip=step.cut.strip_mm)
+            say(", strip {length} at each end", length=_hole_length(step.cut.strip_mm, board, say))
             if step.cut.strip_mm > 0
             else ""
         )
         bits.append(
             '<div class="note">'
             + say(
-                "Cut {length:.0f} mm of {colour} AWG {awg}{strip}.",
-                length=step.cut.cut_mm,
+                "Cut {length} of {colour} AWG {awg}{strip}.",
+                length=_hole_length(step.cut.cut_mm, board, say),
                 colour=escape(say(step.cut.colour)),
                 awg=step.cut.awg,
                 strip=strip,
@@ -838,8 +1171,8 @@ def _html_conductor_step(
         bits.append(
             '<div class="note">'
             + say(
-                "Reinforcing wire: {length:.0f} mm of {gauge:g} mm {material}.",
-                length=step.spine.length_mm,
+                "Reinforcing wire: {length} of {gauge:g} mm {material}.",
+                length=_hole_length(step.spine.length_mm, board, say),
                 gauge=step.spine.gauge_mm,
                 material=escape(say(step.spine.material)),
             )
@@ -1004,15 +1337,10 @@ _MARK_INK: dict[WireMarkKind, str] = {"strip": "#333333", "through": _BEND_INK, 
 
 
 def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, scale: float, *, board: Board | None) -> str:
-    """The same wire straight, at 1:1: what is cut and marked before anything is bent.
-
-    Each mark's distance from the left-hand tip is printed under it, so a whole wire is
-    marked from one end with one ruler and no error adds up from mark to mark. The two
-    tips are named by the holes they end in, which is what says which way round to hold it.
-    """
+    """Count both endpoint holes for each segment between marks."""
     ink, width = _wire_ink(cut)
     m, length, y = TEMPLATE_MARGIN_MM, template.length_mm, 6.0
-    rows = (y + 4.6, y + 7.2)
+    pitch = board.pitch if board is not None else 2.54
     body = [_wire_line([(m, y), (m + length, y)], ink, width)]
     if template.strip_mm > 0:
         for start in (0.0, length - template.strip_mm):
@@ -1022,25 +1350,23 @@ def _straight_svg(template: WireTemplate, step: ConductorStep, cut: WireCut, sca
             )
     body.append(_label(m, y - 2.2, format_hole(step.path[0], board), "start"))
     body.append(_label(m + length, y - 2.2, format_hole(step.path[-1], board), "end"))
-    # A number drops to the second row when it would touch the last one on the first: a
-    # corner one pitch from a bend puts two distances 2.54 mm apart. The tip's own number,
-    # last, is the whole length -- the cut list's figure, where the wire is cut.
-    last_on_first_row = -math.inf
-    for mark in (*template.marks, None):
-        at = length if mark is None else mark.at_mm
-        x = m + at
-        text = f"{at:.1f}"
-        row = 0 if x - last_on_first_row >= len(text) * _CHAR_MM * 0.75 else 1
+    for mark in template.marks:
+        x = m + mark.at_mm
+        dash = _TURN_DASH if mark.kind == "turn" else ""
+        body.append(
+            f'<line x1="{x:.2f}" y1="{y - 1.5:.2f}" x2="{x:.2f}" y2="{y + 2:.2f}" '
+            f'stroke="{_MARK_INK[mark.kind]}" stroke-width=".35"{dash}/>'
+        )
+    positions = sorted({0.0, *(mark.at_mm for mark in template.marks), length})
+    last_label = -math.inf
+    for left, right in itertools.pairwise(positions):
+        x = m + (left + right) / 2
+        text = f"{round((right - left) / pitch + 1, 2):g}"
+        row = 0 if x - last_label >= len(text) * _CHAR_MM * .75 else 1
         if row == 0:
-            last_on_first_row = x
-        if mark is not None:
-            dash = _TURN_DASH if mark.kind == "turn" else ""
-            body.append(
-                f'<line x1="{x:.2f}" y1="{y - 1.5:.2f}" x2="{x:.2f}" y2="{rows[row] - 2:.2f}" '
-                f'stroke="{_MARK_INK[mark.kind]}" stroke-width=".35"{dash}/>'
-            )
-        body.append(_label(x, rows[row], text, size=2.0))
-    return _svg(length + 2 * m, rows[1] + 1.0, scale, "".join(body))
+            last_label = x
+        body.append(_label(x, y + 4.6 + row * 2.6, text, size=2.0))
+    return _svg(length + 2 * m, y + 8.2, scale, "".join(body))
 
 
 def _template_pair(
@@ -1090,8 +1416,8 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
             else say("from the solder side")
         )
         meta = say(
-            "{length:.0f} mm · {colour} · AWG {awg}",
-            length=step.cut.cut_mm,
+            "{length} · {colour} · AWG {awg}",
+            length=_hole_length(step.cut.cut_mm, guide.board, say),
             colour=escape(say(step.cut.colour)),
             awg=step.cut.awg,
         )
@@ -1105,17 +1431,19 @@ def _html_templates(guide: Guide, say: Phrasebook) -> str:
     if not items:
         return ""
     return (
-        f'<section class="phase templates"><h2>{say("Wire templates (1:1)")}</h2><p>'
+        f'<section class="phase templates"><details><summary><h2>{say("Wire templates (1:1)")}</h2></summary><p>'
         + say(
             "Print these pages at 100 % — actual size, not fit to page — and hold the bar "
             "below against a ruler: if it is not {ruler} mm, the printer has scaled them. "
-            "Cut each wire to the length of its straight drawing and mark it there: a dark "
-            "mark is where the insulation is cut, a solid blue one where the wire goes down "
-            "through the board, a dashed one where it turns along it. Then bend it to the "
-            "shape beside, drawn as seen from the face the wire lies on.",
+            "Count holes inclusively, including both ends of each segment. "
+            "Adjacent holes measure 2 holes; L through O measures 4 holes. "
+            "Shared bends belong to both neighboring segments, so use the stated total "
+            "cut length instead of adding the segment labels. "
+            "The solid blue marks show where the wire enters the board and the insulation ends. "
+            "The dashed blue marks show bends along the board. Copper-colored ends are bare wire.",
             ruler=RULER_MM,
         )
-        + f'</p>{_ruler_svg()}<div class="tpl-grid">{"".join(items)}</div></section>'
+        + f'</p>{_ruler_svg()}<div class="tpl-grid">{"".join(items)}</div></details></section>'
     )
 
 
@@ -1153,14 +1481,14 @@ def _html_tables(guide: Guide, say: Phrasebook) -> str:
             parts.append(
                 f"<tr><td>{_wire_type(cut.insulated, say)}</td>"
                 f"<td>{escape(cut.net_name)}</td><td>{_hole(cut.from_hole, board=guide.board)}</td>"
-                f"<td>{_hole(cut.to_hole, board=guide.board)}</td><td>{cut.cut_mm:.0f} mm</td>"
+                f"<td>{_hole(cut.to_hole, board=guide.board)}</td><td>{escape(_hole_length(cut.cut_mm, guide.board, say))}</td>"
                 f"<td>{cut.awg}</td><td>{escape(say(cut.colour))}</td></tr>"
             )
         for lead in guide.lead_list:
             parts.append(_html_lead_row(lead, say, board=guide.board))
         for cable in guide.harness:
             for wire in cable.wires:
-                length = say("cut to fit") if wire.cut_mm is None else f"{wire.cut_mm:.0f} mm"
+                length = say("cut to fit") if wire.cut_mm is None else _hole_length(wire.cut_mm, guide.board, say)
                 parts.append(
                     f"<tr><td>{say('cable wire')} ({escape(cable.ref)})</td>"
                     f"<td>{escape(wire.net_name)}</td><td>{escape(harness_end(wire.a, say))}</td>"
@@ -1171,7 +1499,7 @@ def _html_tables(guide: Guide, say: Phrasebook) -> str:
             parts.append(
                 f"<tr><td>{say('reinforcing wire')}</td><td>{escape(spine.net_name)}</td>"
                 f"<td colspan=2>{say('{pads} pads', pads=spine.pads)}</td>"
-                f"<td>{spine.length_mm:.0f} mm</td>"
+                f"<td>{escape(_hole_length(spine.length_mm, guide.board, say))}</td>"
                 f"<td>{spine.gauge_mm:g} mm</td><td>{escape(say(spine.material))}</td></tr>"
             )
         parts.append("</table></div>")

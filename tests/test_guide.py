@@ -29,7 +29,6 @@ import csv
 import dataclasses
 import io
 import json
-from html import escape
 from pathlib import Path
 
 import pytest
@@ -57,11 +56,13 @@ from perfboard_studio.guide import (
     PartStep,
     all_checkpoints,
     all_steps,
+    assembly_phases,
     build_guide,
     describe,
     document_at_step,
     net_colours,
     step_focus,
+    step_groups,
     wire_template,
 )
 from perfboard_studio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
@@ -611,9 +612,7 @@ def test_an_unroutable_board_is_reported_rather_than_described_as_finished() -> 
 
 
 def test_cut_length_is_the_path_plus_both_ends() -> None:
-    """path + 2 x (board thickness + bend allowance) + 2 x strip. The thickness is in
-    there because the wire goes THROUGH the board and turns over on the far side;
-    leaving it out is how a cut list produces wires that are each 4 mm short."""
+    """The stripped tail includes the length through the board and the far-side bend."""
     doc = make_doc(
         components=(component("R1", "r-axial-4", hole(2, 2)),),
         conductors=(
@@ -625,7 +624,46 @@ def test_cut_length_is_the_path_plus_both_ends() -> None:
 
     cut = guide.cut_list[0]
     assert cut.path_mm == pytest.approx(4 * BOARD.pitch)
-    assert cut.cut_mm == pytest.approx(4 * BOARD.pitch + 2 * (1.6 + 3.0) + 2 * 5.0)
+    assert cut.cut_mm == pytest.approx(4 * BOARD.pitch + 2 * 5.0)
+
+
+
+def test_insulated_tail_is_long_enough_for_the_board() -> None:
+    doc = make_doc(conductors=(
+        WireConductor(id="cond-1", path=(hole(2, 2), hole(2, 6)), kind="insulated-wire"),
+    ))
+    cut = build_guide(doc, REGISTRY, GuideOptions(strip_length_mm=1)).cut_list[0]
+    assert cut.strip_mm == pytest.approx(BOARD.thickness + 3)
+    assert cut.cut_mm == pytest.approx(cut.path_mm + 2 * cut.strip_mm)
+
+
+def test_u_template_counts_holes_inclusively_without_changing_the_cut() -> None:
+    import itertools
+    import math
+    import re
+
+    from perfboard_studio.guide_export import _straight_svg
+
+    path = (hole(11, 15), hole(11, 16), hole(14, 16), hole(14, 15))
+    doc = make_doc(conductors=(
+        WireConductor(id="u", path=path, kind="insulated-wire", side="bottom"),
+    ))
+    guide = build_guide(doc, REGISTRY, GuideOptions(strip_length_mm=2 * BOARD.pitch))
+    step = _wire_steps(guide)[0]
+    assert step.cut is not None
+    template = wire_template(step, BOARD)
+    assert template is not None
+    lengths = [math.dist(a, b) / BOARD.pitch for a,b in itertools.pairwise(template.shape)]
+    assert lengths == pytest.approx([2, 1, 3, 1, 2])
+    assert step.cut.cut_mm / BOARD.pitch == pytest.approx(9)
+    assert [mark.kind for mark in template.marks] == ["through", "turn", "turn", "through"]
+    assert [mark.at_mm / BOARD.pitch for mark in template.marks] == pytest.approx([2, 3, 6, 7])
+    svg = _straight_svg(template, step, step.cut, 1, board=BOARD)
+    labels = re.findall(r'<text[^>]*>([^<]*)</text>', svg)
+    assert labels == ["L16", "O16", "3", "2", "4", "2", "3"]
+    html = guide_to_html(guide)
+    assert "10 holes" in html and "Strip 3 holes at each end" in html
+    assert "6 holes" in html
 
 
 def test_bare_wire_is_not_charged_a_stripping_allowance() -> None:
@@ -672,11 +710,9 @@ def test_a_wire_template_is_the_cut_list_length_bent_where_the_holes_are() -> No
         assert template.bends == (1, 2, 3)
         leg = (step.cut.cut_mm - step.cut.path_mm) / 2
         assert [(mark.kind, mark.at_mm) for mark in template.marks] == [
-            ("strip", pytest.approx(step.cut.strip_mm)),
             ("through", pytest.approx(leg)),
             ("turn", pytest.approx(leg + 4 * BOARD.pitch)),
             ("through", pytest.approx(leg + 7 * BOARD.pitch)),
-            ("strip", pytest.approx(step.cut.cut_mm - step.cut.strip_mm)),
         ]
         inside = [
             0 <= x <= template.width_mm and 0 <= y <= template.height_mm
@@ -1278,15 +1314,65 @@ def test_a_step_with_no_picture_is_still_a_complete_step() -> None:
     assert plain.count('class="step"') == guide.total_steps
 
 
-def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
-    doc = routed_ne555()
-    guide = build_guide(doc, REGISTRY)
+def test_one_viewer_reuses_individual_images_and_keeps_every_action() -> None:
+    guide = build_guide(routed_ne555(), REGISTRY)
     steps = all_steps(guide)
-    some = {step_focus(s): b"\x89PNG fake" for s in steps[:3]}
+    first = steps[0]
+    key = step_focus(first)
+    html = guide_to_html(guide, {
+        f"action:{key}": b"\x89PNG action",
+        f"only:action:{key}": b"\x89PNG only action",
+        "finished:0": b"\x89PNG finished",
+    })
+    assert html.count('class="assembly-viewer"') == 1
+    assert html.count('data-queue-row data-group=') == guide.total_steps
+    assert html.count('data-select-step aria-pressed') == guide.total_steps
+    assert 'data-guide-view="only"' in html and 'data-guide-view="finished"' in html
+    assert '<template id="finished-0">' in html
+    assert '<template id="spot-s1-only">' in html
+    assert html.count('<img') == 4  # viewer, selected, isolated, finished
+    assert html.count('class="step"') == guide.total_steps
+    assert '<details class="checks">' in html
+    assert '<details class="checks" open' not in html
+    assert '<div class="tpl-preview">' not in html
+    assert 'data-wire-card="true"' in html
 
-    html = guide_to_html(guide, some)
 
-    assert html.count("<img") == 3
+def test_crossing_wire_order_takes_priority_over_net_grouping_and_phase() -> None:
+    # A signal under a ground wire must be laid first, even though ground sorts first.
+    doc = make_doc(conductors=(
+        WireConductor(id="lower", path=(hole(2, 4), hole(9, 4)), kind="insulated-wire",
+                      net_id="signal", side="top"),
+        WireConductor(id="upper", path=(hole(5, 2), hole(5, 8)), kind="insulated-wire",
+                      net_id="ground", side="top"),
+        WireConductor(id="same-net", path=(hole(10, 4), hole(14, 4)), kind="insulated-wire",
+                      net_id="signal", side="top"),
+        WireConductor(id="back", path=(hole(5, 2), hole(5, 8)), kind="insulated-wire",
+                      net_id="ground", side="bottom"),
+    ), nets=(net("signal", "SIGNAL", "signal", ()), net("ground", "GND", "ground", ())))
+    guide = build_guide(doc, REGISTRY)
+    wire_steps = {step.conductor_id: step for step in all_steps(guide) if isinstance(step, ConductorStep)}
+    assert wire_steps["upper"].install_after == ("lower",)
+    assert wire_steps["back"].install_after == ()
+    # The upper wire goes under a component in phase 1; bring its lower wire forward too.
+    phases = tuple(dataclasses.replace(phase, steps=tuple(
+        step for step in phase.steps if step != wire_steps["upper"]
+    ) + ((wire_steps["upper"],) if phase.number == 1 else ())) for phase in guide.phases)
+    ordered = assembly_phases(dataclasses.replace(guide, phases=phases))
+    early = next(phase for phase in ordered if phase.number == 1)
+    assert [step.conductor_id for step in early.steps if isinstance(step, ConductorStep)] == ["lower", "upper"]
+    assert len([step for phase in ordered for step in phase.steps]) == len(all_steps(guide))
+    assert assembly_phases(dataclasses.replace(guide, phases=ordered)) == ordered
+
+
+def test_net_wires_are_adjacent_when_crossings_allow_it() -> None:
+    doc = make_doc(conductors=tuple(
+        WireConductor(id=key, path=(hole(2, row), hole(7, row)), kind="insulated-wire", net_id=n)
+        for key, row, n in (("a", 1, "n1"), ("b", 2, "n2"), ("c", 3, "n1"))
+    ), nets=(net("n1", "ONE", "signal", ()), net("n2", "TWO", "signal", ())))
+    guide = build_guide(doc, REGISTRY)
+    groups = [group for phase in assembly_phases(guide) for group in step_groups(phase)]
+    assert any([step.conductor_id for step in group if isinstance(step, ConductorStep)] == ["a", "c"] for group in groups)
 
 
 @pytest.mark.parametrize(
@@ -1330,7 +1416,8 @@ def test_the_picture_is_labelled_with_what_to_do_not_with_what_it_is() -> None:
 
     html = guide_to_html(guide, {step_focus(first): b"\x89PNG fake"})
 
-    assert f'alt="{escape(first.title)}"' in html
+    assert 'alt="Fit ' in html
+    assert " · Component side" in html
 
 
 def test_a_wire_laid_along_the_grid_is_soldered_at_its_two_ends() -> None:
@@ -1397,3 +1484,32 @@ def test_a_bench_check_is_exactly_what_the_guide_makes_a_check_of() -> None:
         assert counted_apart == checked, name
         seen += len(checked)
     assert seen, "some board in the repository carries a bench check, or this proves nothing"
+
+
+def test_compact_wire_card_has_only_summary_diagrams_and_folded_build_notes() -> None:
+    from perfboard_studio.guide_export import _html_wire_card
+    from perfboard_studio.phrasebook import phrasebook
+
+    doc = make_doc(conductors=(WireConductor(
+        id="wire", path=(hole(1,2),hole(5,2)), kind="insulated-wire", side="top",
+    ),))
+    guide = build_guide(doc, REGISTRY)
+    step = next(step for step in all_steps(guide) if isinstance(step, ConductorStep))
+    card = _html_wire_card(step, "s1", phrasebook("en"), BOARD)
+    assert card.count('<svg ') == 2
+    assert ' · Front</div>' in card
+    assert 'AWG' not in card and 'Path:' not in card
+    assert '<details class="wire-notes">' in card
+    assert 'Strip ' in card
+
+
+def test_factory_copper_is_present_before_assembly_and_never_a_build_action() -> None:
+    from perfboard_studio.model import StripConductor
+
+    stock = StripConductor(id="stock", path=(hole(1,1),hole(2,1),hole(3,1)))
+    wire = WireConductor(id="wire", path=(hole(3,1),hole(6,1)), kind="insulated-wire")
+    doc = make_doc(conductors=(stock, wire))
+    guide = build_guide(doc, REGISTRY)
+    assert guide.conductor_steps == 1
+    assert document_at_step(doc, guide, -1).conductors == (stock,)
+    assert document_at_step(doc, guide, 999).conductors == (stock, wire)
