@@ -112,7 +112,10 @@ materials and the cut list.
 The HTML guide uses one shared board viewer above a selectable assembly list. Wires are
 grouped by net where possible, with lower crossing wires installed first. Select an action
 to spotlight it, use **Only this step** to hide everything else, and mark it **Completed**
-to move it below the remaining work. Phase checks and printable wire templates start
+to move it below the remaining work. Compact wire cards show the net, endpoints, total
+length in holes, colour, Front/Back, and the bend diagrams; build notes expand on demand.
+Factory copper groups use white cell outlines on the front and copper on the back.
+Phase checks and printable wire templates start
 collapsed; open the phase checks before moving on. Progress is saved in the browser.
 
 ## Where to go next

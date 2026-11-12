@@ -1852,6 +1852,8 @@ def _conductor_steps(
     spine_list: list[SpineCut] = []
 
     for conductor in doc.conductors:
+        if conductor.kind == "strip":
+            continue  # Factory copper is already on the bare board.
         net = nets_by_id.get(conductor.net_id) if conductor.net_id else None
         net_name = net.name if net is not None else say("(unassigned)")
         net_class: NetClass = net.net_class if net is not None else "signal"
@@ -3158,6 +3160,6 @@ def document_at_step(doc: PerfDocument, guide: Guide, step_index: int) -> PerfDo
     return dataclasses.replace(
         doc,
         components=tuple(c for c in doc.components if c.id in fitted),
-        conductors=tuple(c for c in doc.conductors if c.id in laid),
+        conductors=tuple(c for c in doc.conductors if c.kind == "strip" or c.id in laid),
     )
 

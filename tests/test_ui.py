@@ -17734,3 +17734,25 @@ def test_an_empty_extra_board_says_how_parts_reach_it() -> None:
         _close(window)
 
 
+
+
+def test_custom_factory_strip_front_is_white_cell_instead_of_far_side_copper(monkeypatch) -> None:
+    from perfboard_studio.commands import DEFAULT_BOARD
+    from perfboard_studio.model import StripConductor
+
+    strip = StripConductor(id="factory",path=tuple(HoleCoord(x,1) for x in range(3)))
+    calls=[]
+    class Painter:
+        def setPen(self, pen): calls.append(("pen",pen.color().name()))
+        def setBrush(self, brush): pass
+        def drawRect(self, rect): calls.append(("cell",rect))
+    front=view2d.ConductorItem(strip,DEFAULT_BOARD,"top")
+    monkeypatch.setattr(front,"_paint_conductor",lambda _:calls.append(("copper",)))
+    front.paint(Painter(),None)
+    assert calls[0]==("pen","#f1f3f5")
+    assert calls[1][0]=="cell" and calls[1][1].width()>2*DEFAULT_BOARD.pitch
+    assert not any(call[0]=="copper" for call in calls)
+    back=view2d.ConductorItem(strip,DEFAULT_BOARD,"bottom")
+    monkeypatch.setattr(back,"_paint_conductor",lambda _:calls.append(("copper",)))
+    back.paint(Painter(),None)
+    assert calls[-1]==("copper",)

@@ -420,11 +420,32 @@ summary h2 { display: inline; }
   .assembly-viewer .shot { max-height: 42vh; }
 }
 @media print {
-  .wire-controls, .active-template { display: none; }
+  .wire-controls, .active-template, .assembly [data-wire-card="true"] .tpl-pair { display: none; }
   .assembly-viewer .shot { max-height: none; }
   .completed-list .done { opacity: 1; }
   .assembly .step .note { display: block; }
 }
+
+
+[data-pending-list], [data-completed-list] {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: .7rem;
+}
+.assembly .work-group { display: contents; }
+.assembly .work-group[data-single="true"] > h3 { display: none; }
+.assembly .work-group > h3 { grid-column: 1 / -1; margin: .5rem 0 0; }
+.assembly .step { margin: 0; }
+.assembly [data-wire-card="true"] { display: flex; flex-direction: column; gap: .4rem; }
+.assembly [data-wire-card="true"] .body { width: 100%; }
+.assembly [data-wire-card="true"] .title { font-size: 1rem; }
+.assembly [data-wire-card="true"] .tpl-pair { flex-direction: column; gap: .35rem; margin-top: .4rem; }
+@media screen { .assembly [data-wire-card="true"] svg { max-width: 100%; height: auto; } }
+@media screen { .assembly [data-wire-card="true"] svg:first-child { max-height: 7rem; } }
+@media screen { .assembly [data-wire-card="true"] svg:last-child { max-height: 5rem; } }
+.assembly [data-wire-card="true"] .wire-controls { margin-top: auto; }
+.wire-notes { font-size: .8rem; color: var(--dim); }
+.wire-notes summary { font-weight: normal; padding: .15rem 0; }
+[data-active-row] { max-width: 19rem; margin: .5rem 0 1rem; }
+[data-active-row] [data-wire-card="true"] .queue-context { display: none; }
 
 /* Wire templates. Drawn on white whatever the theme, as the paper they stand for. */
 .tpl-preview { margin: .5rem 0 .1rem; }
@@ -503,11 +524,6 @@ _SCRIPT = """
       button.disabled = !document.getElementById(id);
       button.setAttribute('aria-pressed', button.dataset.guideView === viewMode);
     });
-    var shape = document.getElementById('shape-' + selected.querySelector('input').id);
-    var detail = queue.querySelector('.active-template');
-    detail.hidden = !shape;
-    queue.querySelector('[data-active-template]').replaceChildren();
-    if (shape) queue.querySelector('[data-active-template]').appendChild(shape.content.cloneNode(true));
     queueRows.forEach(function (row) {
       row.querySelector('[data-select-step]').setAttribute('aria-pressed', row === selected);
     });
@@ -530,7 +546,6 @@ _SCRIPT = """
     if (selected) showWire();
     else {
       queue.querySelector('[data-active-caption]').textContent = '__COMPLETE__';
-      queue.querySelector('.active-template').hidden = true;
     }
   }
 
@@ -548,7 +563,7 @@ _SCRIPT = """
     });
   });
 
-  document.querySelectorAll('.queue-context a').forEach(function (link) {
+  document.querySelectorAll('.wire-notes a').forEach(function (link) {
     link.addEventListener('click', function () {
       var target = document.getElementById(link.getAttribute('href').slice(1));
       if (target) target.querySelector('details').open = true;
@@ -938,6 +953,34 @@ def _html_checks(checks: str, say: Phrasebook) -> str:
     ) if checks else ""
 
 
+def _html_wire_card(step: ConductorStep, dom_id: str, say: Phrasebook, board: Board) -> str:
+    length = step.cut.cut_mm if step.cut else step.length_mm
+    colour = step.cut.colour if step.cut else "grey"
+    face = say("Front" if step.side == "top" else "Back")
+    title = (f'{escape(step.net_name)}: {_hole(step.path[0], board=board)} → '
+             f'{_hole(step.path[-1], board=board)}')
+    template = wire_template(step, board)
+    drawing = _template_pair(template, step, step.cut, board=board) if template and step.cut else ""
+    notes = [escape(note) for note in step.notes]
+    if step.cut and step.cut.strip_mm:
+        notes.insert(0, say("Strip {length} at each end.", length=_hole_length(step.cut.strip_mm, board, say)))
+    if step.spine:
+        notes.insert(0, say(
+            "Reinforcing wire: {length} of {gauge:g} mm {material}.",
+            length=_hole_length(step.spine.length_mm, board, say), gauge=step.spine.gauge_mm,
+            material=escape(say(step.spine.material)),
+        ))
+    notes.extend(f'<span class="risk">{escape(risk.message)}</span>' for risk in step.risks)
+    details = ('<details class="wire-notes"><summary>' + say("Build notes") + '</summary>'
+               + ''.join(f'<p>{note}</p>' for note in notes) + '</details>') if notes else ""
+    return (
+        f'<label class="step" for="{dom_id}"><input type="checkbox" id="{dom_id}">'
+        f'<span class="body"><div class="title">{title}</div><div class="meta">'
+        f'{escape(_hole_length(length, board, say))} · {escape(say(colour))} · {face}</div>'
+        f'{drawing}{details}</span></label>'
+    )
+
+
 def _html_assembly(
     guide: Guide, images: Mapping[str, bytes], say: Phrasebook, ids: Mapping[str, str],
 ) -> str:
@@ -951,7 +994,7 @@ def _html_assembly(
                      else say("Fit {parts}", parts=", ".join(step.ref for step in group if isinstance(step, PartStep))))
             group_id = f"work-{len(rows)}"
             context = f"{say('Phase {number}', number=phase.number)} · {phase.title} · {title}"
-            rows.append(f'<section class="work-group" id="{group_id}"><h3>{escape(context)}</h3>')
+            rows.append(f'<section class="work-group" id="{group_id}" data-single="{str(len(group) == 1).lower()}"><h3>{escape(title)}</h3>')
             for step in group:
                 key = step_focus(step)
                 dom_id = ids[key]
@@ -969,25 +1012,23 @@ def _html_assembly(
                             first_picture = picture
                 card = (_html_part_step(step, dom_id, say=say, board=guide.board)
                         if isinstance(step, PartStep) else
-                        _html_conductor_step(step, dom_id, say=say, board=guide.board))
+                        _html_wire_card(step, dom_id, say, guide.board))
                 # A row has explicit controls, so clicking its text must not tick it off.
                 card = card.replace(f'<label class="step" for="{dom_id}">',
                     f'<div class="step" data-queue-row data-group="{group_id}" '
-                    f'data-target="{target}" data-face="{int(bottom)}" data-context="{escape(context)}">', 1)
+                    f'data-target="{target}" data-face="{int(bottom)}" data-wire-card="{str(isinstance(step, ConductorStep)).lower()}" data-context="{escape(context)}">', 1)
                 card = card.removesuffix("</label>") + "</div>"
                 card = card.replace(f'<input type="checkbox" id="{dom_id}">', "", 1)
                 controls = (f'<div class="wire-controls"><button type="button" data-select-step '
                             f'aria-pressed="false">{say("Select")}</button>'
                             f'<label><input type="checkbox" id="{dom_id}"> {say("Completed")}</label></div>')
-                card = card.replace('<span class="body">', '<span class="body">' +
-                                    f'<div class="meta queue-context">{escape(context)} · {escape(face)} · '
-                                    f'<a href="#phase-{phase.number}">{say("Check before moving on")}</a></div>', 1)
+                if isinstance(step, PartStep):
+                    card = card.replace('<span class="body">', '<span class="body">' +
+                                        f'<div class="meta queue-context">{escape(context)} · {escape(face)}</div>', 1)
+                else:
+                    link = f'<a href="#phase-{phase.number}">{say("Check before moving on")}</a>'
+                    card = card.replace('</details>', link + '</details>', 1)
                 card = card.removesuffix("</div>") + controls + "</div>"
-                if isinstance(step, ConductorStep) and step.cut:
-                    template = wire_template(step, guide.board)
-                    if template:
-                        pictures.append(f'<template id="shape-{dom_id}">' +
-                            _template_pair(template, step, step.cut, TEMPLATE_PREVIEW_SCALE, board=guide.board) + '</template>')
                 rows.append(card)
             rows.append("</section>")
     if not rows:
@@ -1003,8 +1044,6 @@ def _html_assembly(
         + f'<div class="shot-scroll">{first_picture}</div><div class="picture-tools">{buttons}'
         + (f'<button type="button" data-guide-zoom aria-pressed="false">{say("Zoom board")}</button>' if first_picture else "")
         + '</div></figure><div data-active-row></div>'
-        + '<details class="active-template"><summary>' + say("Wire shape and length")
-        + '</summary><div class="tpl-pair" data-active-template></div></details>'
         + f'<div data-pending-list>{"".join(rows)}</div><details class="completed-list"><summary>'
         + say("Completed") + '</summary><div data-completed-list></div></details>'
         + ''.join(pictures) + '</section>'

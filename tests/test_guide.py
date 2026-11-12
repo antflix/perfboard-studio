@@ -662,7 +662,7 @@ def test_u_template_counts_holes_inclusively_without_changing_the_cut() -> None:
     labels = re.findall(r'<text[^>]*>([^<]*)</text>', svg)
     assert labels == ["L16", "O16", "3", "2", "4", "2", "3"]
     html = guide_to_html(guide)
-    assert "Cut 10 holes" in html and "strip 3 holes at each end" in html
+    assert "10 holes" in html and "Strip 3 holes at each end" in html
     assert "6 holes" in html
 
 
@@ -1335,7 +1335,7 @@ def test_one_viewer_reuses_individual_images_and_keeps_every_action() -> None:
     assert '<details class="checks">' in html
     assert '<details class="checks" open' not in html
     assert '<div class="tpl-preview">' not in html
-    assert 'data-active-template' in html
+    assert 'data-wire-card="true"' in html
 
 
 def test_crossing_wire_order_takes_priority_over_net_grouping_and_phase() -> None:
@@ -1484,3 +1484,32 @@ def test_a_bench_check_is_exactly_what_the_guide_makes_a_check_of() -> None:
         assert counted_apart == checked, name
         seen += len(checked)
     assert seen, "some board in the repository carries a bench check, or this proves nothing"
+
+
+def test_compact_wire_card_has_only_summary_diagrams_and_folded_build_notes() -> None:
+    from perfboard_studio.guide_export import _html_wire_card
+    from perfboard_studio.phrasebook import phrasebook
+
+    doc = make_doc(conductors=(WireConductor(
+        id="wire", path=(hole(1,2),hole(5,2)), kind="insulated-wire", side="top",
+    ),))
+    guide = build_guide(doc, REGISTRY)
+    step = next(step for step in all_steps(guide) if isinstance(step, ConductorStep))
+    card = _html_wire_card(step, "s1", phrasebook("en"), BOARD)
+    assert card.count('<svg ') == 2
+    assert ' · Front</div>' in card
+    assert 'AWG' not in card and 'Path:' not in card
+    assert '<details class="wire-notes">' in card
+    assert 'Strip ' in card
+
+
+def test_factory_copper_is_present_before_assembly_and_never_a_build_action() -> None:
+    from perfboard_studio.model import StripConductor
+
+    stock = StripConductor(id="stock", path=(hole(1,1),hole(2,1),hole(3,1)))
+    wire = WireConductor(id="wire", path=(hole(3,1),hole(6,1)), kind="insulated-wire")
+    doc = make_doc(conductors=(stock, wire))
+    guide = build_guide(doc, REGISTRY)
+    assert guide.conductor_steps == 1
+    assert document_at_step(doc, guide, -1).conductors == (stock,)
+    assert document_at_step(doc, guide, 999).conductors == (stock, wire)

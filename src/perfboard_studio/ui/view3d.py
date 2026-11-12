@@ -6729,6 +6729,39 @@ def _trace_swell(cond: Conductor, centreline: list[tuple[float, float, float]]) 
     return swell
 
 
+def _factory_strip_actors(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
+    """Etched copper on its face and a white group cell on the opposite face."""
+    copper, ink = _Mesh(), _Mesh()
+    sign = 1 if cond.side == "top" else -1
+    copper_z = pad_z(board, cond.side) - sign * STRIP_UNDER_PAD_MM
+    ink_z = -board.thickness - .008 if cond.side == "top" else .008
+    points = [_xy(board, hole) for hole in cond.path]
+    for (ax, ay), (bx, by) in pairwise(points):
+        if ay == by:
+            lo, hi = sorted((ax, bx))
+            copper.rectangle((lo + .65, ay - .5, hi - .65, ay + .5), copper_z)
+        else:
+            lo, hi = sorted((ay, by))
+            copper.rectangle((ax - .5, lo + .65, ax + .5, hi - .65), copper_z)
+    margin = board.pitch * .46
+    left, right = min(p[0] for p in points)-margin, max(p[0] for p in points)+margin
+    low, high = min(p[1] for p in points)-margin, max(p[1] for p in points)+margin
+    for rect in ((left,low,right,low+.09), (left,high-.09,right,high),
+                 (left,low,left+.09,high), (right-.09,low,right,high)):
+        ink.rectangle(rect, ink_z)
+    actors = []
+    for mesh, colour, finish in ((copper, scheme_for(board).pad_rgb, TINNED),
+                                (ink, (.94, .95, .96), (.02, 12))):
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(mesh.data())
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(*colour)
+        _finish(actor.GetProperty(), finish)
+        actors.append(actor)
+    return actors
+
+
 def build_conductor(
     cond: Conductor,
     board: Board,
@@ -6744,6 +6777,8 @@ def build_conductor(
     error because it was one. A small per-conductor offset makes one pass over the other,
     which is what the board actually looks like.
     """
+    if cond.kind == "strip":
+        return _factory_strip_actors(cond, board)
     is_trace = contacts_every_path_hole(cond)
     z = conductor_z(cond, board, stack)
     joint_z = pad_z(board, cond.side)

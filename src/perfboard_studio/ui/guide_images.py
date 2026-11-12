@@ -32,6 +32,8 @@ def _annotate(
     active_ids = {step_focus(step) for step in work}
     tags: dict[HoleCoord, tuple[str, bool]] = {}
     for wire in doc.conductors:
+        if wire.kind == "strip":
+            continue
         if wire.id not in active_ids:
             for hole in (wire.path[0], wire.path[-1]):
                 tags[hole] = format_hole(hole, board), False
@@ -141,7 +143,7 @@ def render_guide_images(
             current = replace(
                 current,
                 components=tuple(part for part in current.components if part.id in active),
-                conductors=tuple(wire for wire in current.conductors if wire.id in active),
+                conductors=tuple(wire for wire in current.conductors if wire.kind == "strip" or wire.id in active),
             )
         side: BoardSide = "bottom" if bottom else "top"
         scene = BoardScene(

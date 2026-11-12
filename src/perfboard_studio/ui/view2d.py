@@ -2292,6 +2292,16 @@ class ConductorItem(QGraphicsItem):
             painter.drawEllipse(point, radius, radius)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        if self.conductor.kind == "strip" and self.is_far_side():
+            # Factory copper is hidden by the board; its front-side cell is white ink.
+            points = self._points()
+            xs, ys = [p.x() for p in points], [p.y() for p in points]
+            margin = self.board.pitch * .46
+            painter.setPen(QPen(SELECTED if self.isSelected() or self.net_lit else QColor("#f1f3f5"), .09))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRectF(min(xs)-margin, min(ys)-margin,
+                                   max(xs)-min(xs)+2*margin, max(ys)-min(ys)+2*margin))
+            return
         # Copper on the far face, quieter on screen (FAR_SIDE_OPACITY) -- but never what is
         # selected or lit, which is being looked for, and never on paper.
         if (
